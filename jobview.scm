@@ -51,21 +51,15 @@ list (hours minutes seconds)."
   (tstart job-tstart)
   (walltime job-walltime))
 
-;; Comparison functions to sort the menu:
-(define (compare-user job1 job2)
-  (string<=? (job-user job1) (job-user job2)))
-
-(define (compare-effic job1 job2)
-  (<= (job-effic job1) (job-effic job2)))
-
-(define (compare-procs job1 job2)
-  (<= (job-procs job1) (job-procs job2)))
-
-(define (compare-walltime job1 job2)
-  (<= (job-walltime job1) (job-walltime job2)))
-
-(define (compare-time job1 job2)
-  (>= (job-tstart job1) (job-tstart job2))) ; >=: Sort by ascending runtime ~> sort by descending starttime...
+(define (compare field)
+  "Returns a two-argument procedure that compares two job records
+using the accessor FIELD, e.g. (compare job-effic)."
+  (lambda (job1 job2)
+    (let ((f1 (field job1))
+	  (f2 (field job2)))
+      (if (number? f1)
+	  (<= f1 f2)
+	  (string<=? f1 f2)))))
 
 (define (xml->job x)
   "Create a job record from showq's xml output."
@@ -215,9 +209,9 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
       (addstr help-pan "<Q>: Quit <Enter>: View script <Up/Down>: Scroll") ;; use acs-darrow / acs uarrow?
 
       (let display-jobs ((joblist (get-joblist))
-			 (compare compare-effic))
+			 (sort-p (compare job-effic)))
 	(let* ((jobs-menu (new-menu (map (cut job->menu-item <> (current-time))
-					 (sort joblist compare))))
+					 (sort joblist sort-p))))
 	       (refresh-menu (lambda () (drawmenu jobs-menu jobs-pan)))
 	       (%resize (lambda ()
 			  (unpost-menu jobs-menu)
@@ -256,27 +250,29 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 	     ;; Sort by efficiency/procs/username/...
 	     ((eqv? c #\e)
 	      (unpost-menu jobs-menu)
-  	      (display-jobs joblist compare-effic))
+  	      (display-jobs joblist (compare job-effic)))
 
 	     ((eqv? c #\p)
 	      (unpost-menu jobs-menu)
-	      (display-jobs joblist compare-procs))
+	      (display-jobs joblist (compare job-procs)))
 
 	     ((eqv? c #\u)
 	      (unpost-menu jobs-menu)
-  	      (display-jobs joblist compare-user))
+  	      (display-jobs joblist (compare job-user)))
 
 	     ((eqv? c #\t)
 	      (unpost-menu jobs-menu)
-	      (display-jobs joblist compare-time))
+	      ;; We want to sort by ascending time => sort by
+	      ;; descending start time => negate.
+	      (display-jobs joblist (negate (compare job-tstart))))
 
 	     ((eqv? c #\w)
 	      (unpost-menu jobs-menu)
-	      (display-jobs joblist compare-walltime))
+	      (display-jobs joblist (compare job-walltime)))
 
 	     ((eqv? c #\r)
 	      (unpost-menu jobs-menu)
-	      (display-jobs (get-joblist) compare))
+	      (display-jobs (get-joblist) sort-p))
 
 	     ;; Terminal resize events are passed as 'KEY_RESIZE':
 	     ((eqv? c KEY_RESIZE)
