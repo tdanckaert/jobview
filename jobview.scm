@@ -141,8 +141,6 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 
 (define (drawmenu menu panel)
 
-  (unpost-menu menu)
-  
   ;; Set the main window and subwindow
   (set-menu-win! menu panel)
   (set-menu-sub! menu
@@ -238,16 +236,20 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 
 	     ;; Sort by efficiency/procs/username/...
 	     ((eqv? c #\e)
-	      (display-jobs joblist compare-effic))
+	      (unpost-menu jobs-menu)
+  	      (display-jobs joblist compare-effic))
 
 	     ((eqv? c #\p)
+	      (unpost-menu jobs-menu)
 	      (display-jobs joblist compare-procs))
 
 	     ((eqv? c #\u)
-	      (display-jobs joblist compare-user))
+	      (unpost-menu jobs-menu)
+  	      (display-jobs joblist compare-user))
 
 	     ;; Refresh
 	     ((eqv? c #\r)
+	      (unpost-menu jobs-menu)
 	      (display-jobs (get-joblist) compare))
 
 	     ;; Terminal resize events are passed as 'KEY_RESIZE':
