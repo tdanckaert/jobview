@@ -42,6 +42,16 @@ redirected to avoid conflicts with the curses interface."
   (tstart job-tstart)
   (walltime job-walltime))
 
+;; Comparison functions to sort the menu:
+(define (compare-user job1 job2)
+  (string<=? (job-user job1) (job-user job2)))
+
+(define (compare-effic job1 job2)
+  (<= (job-effic job1) (job-effic job2)))
+
+(define (compare-procs job1 job2)
+  (<= (job-procs job1) (job-procs job2)))
+
 (define (xml->job x)
   "Create a job record from showq's xml output."
   (sxml-match x [(job (@ (User ,user)
@@ -54,10 +64,15 @@ redirected to avoid conflicts with the curses interface."
 			 (StartTime ,tstart)
 			 (ReqAWDuration ,walltime)
 			 . ,rest ))
-		 (make-job user id name procs host
+		 (make-job user
+			   (string->number id)
+			   name
+			   (string->number procs)
+			   host
 			   (* 100 (/ (string->number psutil)
 				     (string->number psdemand)))
-			    tstart walltime)]))
+			   (string->number tstart)
+			   (string->number walltime))]))
 
 (define (get-joblist)
   (catch 'cmd-failed
@@ -154,18 +169,12 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
   (post-menu menu))
 
 (define (job->menu-item job)
-  (new-item (job-id job)
+  (new-item (number->string (job-id job))
 	    (format #f "~a ~20@y ~30t ~5a ~6,2f"
 		    (job-user job)
 		    (job-name job)
 		    (job-procs job)
 		    (job-effic job))))
-
-(define (less-effic job1 job2)
-  (<= (job-effic job1) (job-effic job2)))
-
-(define (less-user job1 job2)
-  (string>=? (job-user job1) (job-user job2)))
 
 ;; Main input loop.
 (catch #t
@@ -188,8 +197,10 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 
       (addstr help-pan "<Q>: Quit <Enter>: View script <Up/Down>: Scroll") ;; use acs-darrow / acs uarrow?
 
-      (let display-jobs ((joblist (get-joblist)))
-	(let* ((jobs-menu (new-menu (map job->menu-item joblist)))
+      (let display-jobs ((joblist (get-joblist))
+			 (compare compare-effic))
+	(let* ((jobs-menu (new-menu (map job->menu-item
+					 (sort joblist compare))))
 	       (refresh-menu (lambda () (drawmenu jobs-menu jobs-pan)))
 	       (%resize (lambda ()
 			  (unpost-menu jobs-menu)
@@ -225,11 +236,19 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 	      (menu-driver jobs-menu REQ_SCR_UPAGE)
 	      (loop (getch jobs-pan)))
 
-	     ((eqv? c #\u)
-	      (display-jobs (sort joblist less-user)))
+	     ;; Sort by efficiency/procs/username/...
+	     ((eqv? c #\e)
+	      (display-jobs joblist compare-effic))
 
+	     ((eqv? c #\p)
+	      (display-jobs joblist compare-procs))
+
+	     ((eqv? c #\u)
+	      (display-jobs joblist compare-user))
+
+	     ;; Refresh
 	     ((eqv? c #\r)
-	      (display-jobs (get-joblist)))
+	      (display-jobs (get-joblist) compare))
 
 	     ;; Terminal resize events are passed as 'KEY_RESIZE':
 	     ((eqv? c KEY_RESIZE)
