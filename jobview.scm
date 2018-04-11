@@ -158,6 +158,13 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 		    (job-name job)
 		    (job-procs job)
 		    (job-effic job))))
+
+(define (less-effic job1 job2)
+  (<= (job-effic job1) (job-effic job2)))
+
+(define (less-user job1 job2)
+  (string>=? (job-user job1) (job-user job2)))
+
 ;; Main input loop.
 (catch #t
   ;; We use a catch-all exception handler to make sure (endwin) is
@@ -168,15 +175,7 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
     (let* ((stdscr (initscr))
 	   (script-pan (newwin 0 0 0 0 #:panel #t))
 	   (jobs-pan (newwin (1- (lines)) 0 0 0 #:panel #t))
-	   (help-pan (newwin 1 0 (1- (lines)) 0 #:panel #t))
-	   (jobs-menu (new-menu (map job->menu-item joblist)))
-	   (%resize-panels (lambda ()
-			     (unpost-menu jobs-menu)
-			     (resize jobs-pan (1- (lines)) (cols))
-			     (resize help-pan 1 (cols))
-			     (mvwin help-pan (1- (lines)) 0)
-			     (drawmenu jobs-menu jobs-pan)))
-	   (show-jobscript (jobscript-viewer script-pan %resize-panels)))
+	   (help-pan (newwin 1 0 (1- (lines)) 0 #:panel #t)))
 
       (cbreak!)
       (noecho!)
@@ -187,59 +186,69 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 
       (addstr help-pan "<Q>: Quit <Enter>: View script <Up/Down>: Scroll") ;; use acs-darrow / acs uarrow?
 
-      (drawmenu jobs-menu jobs-pan)
-      (update-panels)
-      (doupdate)
+      (let display-jobs ((jobs-menu (new-menu (map job->menu-item joblist))))
+	(let* ((refresh-menu (lambda () (drawmenu jobs-menu jobs-pan)))
+	       (%resize (lambda ()
+			  (unpost-menu jobs-menu)
+			  (resize jobs-pan (1- (lines)) (cols))
+			  (resize help-pan 1 (cols))
+			  (mvwin help-pan (1- (lines)) 0)
+			  (refresh-menu)))
+	       (show-jobscript (jobscript-viewer script-pan %resize)))
 
-      ;; TODO:
-      ;;
-      ;; - Allow sorting menu items
-      ;; - Allow refreshing list
-
-      ;; Process the up and down arrow keys.  Break the loop if q or Q is
-      ;; pressed.
-      (let loop ((c (getch jobs-pan)))
-	(cond
-
-	 ;; Handle (Page)Up/(Page)Down keys:
-	 ((eqv? c KEY_DOWN)
-	  (menu-driver jobs-menu REQ_DOWN_ITEM)
-	  (loop (getch jobs-pan)))
-
-	 ((eqv? c KEY_NPAGE)
-	  (menu-driver jobs-menu REQ_SCR_DPAGE)
-	  (loop (getch jobs-pan)))
-
-	 ((eqv? c KEY_UP)
-	  (menu-driver jobs-menu REQ_UP_ITEM)
-	  (loop (getch jobs-pan)))
-
-	 ((eqv? c KEY_PPAGE)
-	  (menu-driver jobs-menu REQ_SCR_UPAGE)
-	  (loop (getch jobs-pan)))
-
-	 ;; Terminal resize events are passed as 'KEY_RESIZE':
-	 ((eqv? c KEY_RESIZE)
-	  (%resize-panels)
-	  (loop (getch jobs-pan)))
-
-	 ;; Enter or space: view jobscript
-	 ((or (eqv? c #\sp)
-	      (eqv? c KEY_ENTER)
-	      (eqv? c #\cr)
-	      (eqv? c #\nl))
-	  (show-jobscript (item-name (current-item jobs-menu)))
-	  (hide-panel script-pan)
+	  (refresh-menu)
 	  (update-panels)
 	  (doupdate)
-	  (loop (getch jobs-pan)))
 
-	 ;; If 'Q' or 'q'  is pressed, quit.  Otherwise, loop.
-	 ((not (or (eqv? c #\Q) (eqv? c #\q)))
-	  (loop (getch jobs-pan)))))))
+	  ;; Process the up and down arrow keys.  Break the loop if q or Q is
+	  ;; pressed.
+	  (let loop ((c (getch jobs-pan)))
+	    (cond
 
-  (lambda  (key . parameters )
-    (endwin)
-    (throw key parameters)))
+	     ;; Handle (Page)Up/(Page)Down keys:
+	     ((eqv? c KEY_DOWN)
+	      (menu-driver jobs-menu REQ_DOWN_ITEM)
+	      (loop (getch jobs-pan)))
+
+	     ((eqv? c KEY_NPAGE)
+	      (menu-driver jobs-menu REQ_SCR_DPAGE)
+	      (loop (getch jobs-pan)))
+
+	     ((eqv? c KEY_UP)
+	      (menu-driver jobs-menu REQ_UP_ITEM)
+	      (loop (getch jobs-pan)))
+
+	     ((eqv? c KEY_PPAGE)
+	      (menu-driver jobs-menu REQ_SCR_UPAGE)
+	      (loop (getch jobs-pan)))
+
+	     ((eqv? c #\u)
+	      (unpost-menu jobs-menu)
+	      (display-jobs (new-menu (map job->menu-item
+					   (sort joblist less-user)))))
+
+	     ;; Terminal resize events are passed as 'KEY_RESIZE':
+	     ((eqv? c KEY_RESIZE)
+	      (%resize)
+	      (loop (getch jobs-pan)))
+
+	     ;; Enter or space: view jobscript
+	     ((or (eqv? c #\sp)
+		  (eqv? c KEY_ENTER)
+		  (eqv? c #\cr)
+		  (eqv? c #\nl))
+	      (show-jobscript (item-name (current-item jobs-menu)))
+	      (hide-panel script-pan)
+	      (update-panels)
+	      (doupdate)
+	      (loop (getch jobs-pan)))
+
+	     ;; If 'Q' or 'q'  is pressed, quit.  Otherwise, loop.
+	     ((not (or (eqv? c #\Q) (eqv? c #\q)))
+	      (loop (getch jobs-pan)))))))))
+
+      (lambda  (key . parameters )
+	(endwin)
+	(throw key parameters)))
 
 (endwin)
