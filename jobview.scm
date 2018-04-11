@@ -190,7 +190,7 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 		      walltime-format (hour-min-sec (- tnow (job-tstart job)))
 		      walltime-format (hour-min-sec (job-walltime job))))))
 
-(catch #t
+(with-throw-handler #t
   ;; We use a catch-all exception handler to make sure (endwin) is
   ;; called before quitting the program.  Otherwise, errors might leave
   ;; the terminal in a bad state.
@@ -297,7 +297,6 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 	      (loop (getch jobs-pan)))))))))
 
       (lambda  (key . parameters )
-	(endwin)
-	(throw key parameters)))
+	(endwin)))
 
 (endwin)
