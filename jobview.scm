@@ -59,7 +59,7 @@ redirected to avoid conflicts with the curses interface."
 				     (string->number psdemand)))
 			    tstart walltime)]))
 
-(define joblist
+(define (get-joblist)
   (catch 'cmd-failed
     (lambda ()
       (map xml->job ((sxpath '(// Data queue job))
@@ -125,6 +125,8 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 	(delwin pad)))))
 
 (define (drawmenu menu panel)
+
+  (unpost-menu menu)
   
   ;; Set the main window and subwindow
   (set-menu-win! menu panel)
@@ -186,8 +188,9 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 
       (addstr help-pan "<Q>: Quit <Enter>: View script <Up/Down>: Scroll") ;; use acs-darrow / acs uarrow?
 
-      (let display-jobs ((jobs-menu (new-menu (map job->menu-item joblist))))
-	(let* ((refresh-menu (lambda () (drawmenu jobs-menu jobs-pan)))
+      (let display-jobs ((joblist (get-joblist)))
+	(let* ((jobs-menu (new-menu (map job->menu-item joblist)))
+	       (refresh-menu (lambda () (drawmenu jobs-menu jobs-pan)))
 	       (%resize (lambda ()
 			  (unpost-menu jobs-menu)
 			  (resize jobs-pan (1- (lines)) (cols))
@@ -223,9 +226,10 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 	      (loop (getch jobs-pan)))
 
 	     ((eqv? c #\u)
-	      (unpost-menu jobs-menu)
-	      (display-jobs (new-menu (map job->menu-item
-					   (sort joblist less-user)))))
+	      (display-jobs (sort joblist less-user)))
+
+	     ((eqv? c #\r)
+	      (display-jobs (get-joblist)))
 
 	     ;; Terminal resize events are passed as 'KEY_RESIZE':
 	     ((eqv? c KEY_RESIZE)
