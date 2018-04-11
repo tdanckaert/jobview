@@ -1,5 +1,6 @@
 (use-modules (srfi srfi-1)
 	     (srfi srfi-9)
+	     (srfi srfi-26)
 	     (ice-9 format)
 	     (ice-9 popen)
 	     (ice-9 rdelim)
@@ -30,6 +31,14 @@ redirected to avoid conflicts with the curses interface."
 		 (if (eq? char #\newline) (1+ count) count))
 	       1 string))
 
+(define (hour-min-sec duration)
+  "Convert a duration, given as a number of seconds, into a
+list (hours minutes seconds)."
+  (let* ((secs (modulo duration 60))
+	 (mins*60 (modulo (- duration secs) 3600))
+	 (hours*3600 (- duration mins*60 secs)))
+    (list (/ hours*3600 3600) (/ mins*60 60) secs)))
+
 (define-record-type <job>
   (make-job user id name procs host effic tstart walltime)
   job?
@@ -51,6 +60,12 @@ redirected to avoid conflicts with the curses interface."
 
 (define (compare-procs job1 job2)
   (<= (job-procs job1) (job-procs job2)))
+
+(define (compare-walltime job1 job2)
+  (<= (job-walltime job1) (job-walltime job2)))
+
+(define (compare-time job1 job2)
+  (>= (job-tstart job1) (job-tstart job2))) ; >=: Sort by ascending runtime ~> sort by descending starttime...
 
 (define (xml->job x)
   "Create a job record from showq's xml output."
@@ -155,7 +170,8 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
   ;; Print a border around the main window, and a title
   (box panel 0 0)
   (move panel 1 4)
-  (addstr panel (format #f "Jobid ~8a ~a ~36t ~a ~a" "User" "JobName" "Procs" "Eff"))
+  (addstr panel (format #f "Jobid ~8a ~a ~36t ~a ~6a  ~8a  ~a"
+			"User" "JobName" "Procs" "Eff" "Time" "Walltime"))
 
   (move panel 2 0)
   (addch panel (acs-ltee))
@@ -166,13 +182,16 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 
   (post-menu menu))
 
-(define (job->menu-item job)
-  (new-item (number->string (job-id job))
-	    (format #f "~a ~20@y ~30t ~5a ~6,2f"
-		    (job-user job)
-		    (job-name job)
-		    (job-procs job)
-		    (job-effic job))))
+(define (job->menu-item job tnow)
+  (let ((walltime-format "~2,'0d:~2,'0d:~2,'0d"))
+    (new-item (number->string (job-id job))
+	      (format #f "~a ~20@y ~30t ~5a ~6,2f  ~k  ~k"
+		      (job-user job)
+		      (job-name job)
+		      (job-procs job)
+		      (job-effic job)
+		      walltime-format (hour-min-sec (- tnow (job-tstart job)))
+		      walltime-format (hour-min-sec (job-walltime job))))))
 
 ;; Main input loop.
 (catch #t
@@ -197,7 +216,7 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 
       (let display-jobs ((joblist (get-joblist))
 			 (compare compare-effic))
-	(let* ((jobs-menu (new-menu (map job->menu-item
+	(let* ((jobs-menu (new-menu (map (cut job->menu-item <> (current-time))
 					 (sort joblist compare))))
 	       (refresh-menu (lambda () (drawmenu jobs-menu jobs-pan)))
 	       (%resize (lambda ()
@@ -247,7 +266,14 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 	      (unpost-menu jobs-menu)
   	      (display-jobs joblist compare-user))
 
-	     ;; Refresh
+	     ((eqv? c #\t)
+	      (unpost-menu jobs-menu)
+	      (display-jobs joblist compare-time))
+
+	     ((eqv? c #\w)
+	      (unpost-menu jobs-menu)
+	      (display-jobs joblist compare-walltime))
+
 	     ((eqv? c #\r)
 	      (unpost-menu jobs-menu)
 	      (display-jobs (get-joblist) compare))
