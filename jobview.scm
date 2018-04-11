@@ -137,6 +137,8 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 
 	     ((eqv? c KEY_RESIZE)
 	      (%resize)
+	      ;; resize function will reset the whole display, so run
+	      ;; show-script again.
 	      (show-script script))
 
 	     ;; Return if we get enter/space/q, otherwise read a new input character.
@@ -161,9 +163,10 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
   ;; Set the menu mark string
   (set-menu-mark! menu " * ")
 
-  ;; Print a border around the main window, and a title
+  ;; Print a border around the main window.
   (box panel 0 0)
   (move panel 1 4)
+  ;; Menu title
   (addstr panel (format #f "Jobid ~8a ~a ~36t ~a ~6a  ~8a  ~a"
 			"User" "JobName" "Procs" "Eff" "Time" "Walltime"))
 
@@ -187,7 +190,6 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 		      walltime-format (hour-min-sec (- tnow (job-tstart job)))
 		      walltime-format (hour-min-sec (job-walltime job))))))
 
-;; Main input loop.
 (catch #t
   ;; We use a catch-all exception handler to make sure (endwin) is
   ;; called before quitting the program.  Otherwise, errors might leave
@@ -225,8 +227,7 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 	  (update-panels)
 	  (doupdate)
 
-	  ;; Process the up and down arrow keys.  Break the loop if q or Q is
-	  ;; pressed.
+	  ;; Main input loop.
 	  (let loop ((c (getch jobs-pan)))
 	    (cond
 
@@ -270,6 +271,7 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 	      (unpost-menu jobs-menu)
 	      (display-jobs joblist (compare job-walltime)))
 
+	     ;; Refresh job list
 	     ((eqv? c #\r)
 	      (unpost-menu jobs-menu)
 	      (display-jobs (get-joblist) sort-p))
