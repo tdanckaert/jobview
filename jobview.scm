@@ -1,4 +1,5 @@
 (use-modules (srfi srfi-1)
+	     (srfi srfi-9)
 	     (ice-9 format)
 	     (ice-9 popen)
 	     (ice-9 rdelim)
@@ -29,28 +30,45 @@ redirected to avoid conflicts with the curses interface."
 		 (if (eq? char #\newline) (1+ count) count))
 	       1 string))
 
+(define-record-type <job>
+  (make-job user id name procs host effic tstart walltime)
+  job?
+  (user job-user)
+  (id job-id)
+  (name job-name)
+  (procs job-procs)
+  (host job-host)
+  (effic job-effic)
+  (tstart job-tstart)
+  (walltime job-walltime))
+
+(define (xml->job x)
+  "Create a job record from showq's xml output."
+  (sxml-match x [(job (@ (User ,user)
+			 (JobID ,id)
+			 (JobName ,name)
+			 (ReqProcs ,procs)
+			 (MasterHost ,host)
+			 (StatPSUtl ,psutil)
+			 (StatPSDed ,psdemand)
+			 (StartTime ,tstart)
+			 (ReqAWDuration ,walltime)
+			 . ,rest ))
+		 (make-job user id name procs host
+			   (* 100 (/ (string->number psutil)
+				     (string->number psdemand)))
+			    tstart walltime)]))
+
 (define joblist
   (catch 'cmd-failed
     (lambda ()
-      ((sxpath '(// Data queue job))
-       (xml->sxml (read-stdout "ssh login-hopper.uantwerpen.be showq -r --xml"))))
+      (map xml->job ((sxpath '(// Data queue job))
+		     (xml->sxml (read-stdout "ssh login-hopper.uantwerpen.be showq -r --xml")))))
     (lambda (key cmd status)
       (format (current-error-port)
 	      "ERROR: Could not obtain job list.: command '~a' returned ~d.\n"
 	       cmd status)
       (quit 1))))
-
-(define (job->menu-item x)
-  (sxml-match x [(job (@ (User ,u)
-			 (JobID ,id)
-			 (JobName ,name)
-			 (ReqProcs ,procs)
-			 (StatPSUtl ,psutil)
-			 (StatPSDed ,psdemand)
-			 . ,rest ))
-		 (new-item id (format #f "~a ~20@y ~30t ~5a ~6,2f" u name procs
-				      (* 100 (/ (string->number psutil)
-						(string->number psdemand)))))]))
 
 (define (get-jobscript jobid)
   (catch 'cmd-failed
@@ -133,6 +151,13 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 
   (post-menu menu))
 
+(define (job->menu-item job)
+  (new-item (job-id job)
+	    (format #f "~a ~20@y ~30t ~5a ~6,2f"
+		    (job-user job)
+		    (job-name job)
+		    (job-procs job)
+		    (job-effic job))))
 ;; Main input loop.
 (catch #t
   ;; We use a catch-all exception handler to make sure (endwin) is
