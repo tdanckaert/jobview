@@ -150,6 +150,12 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 
 	(delwin pad)))))
 
+(define (ssh job)
+  (endwin)
+  (system (format #f "ssh -tt login-hopper.uantwerpen.be ssh ~a"
+		  (job-host job)))
+  (doupdate))
+
 (define (drawmenu menu panel)
 
   ;; Set the main window and subwindow
@@ -269,16 +275,22 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 	     ((eqv? c #\w)
 	      (update-jobs joblist (compare job-walltime)))
 
-	     ;; Refresh job list
+	     ;; Refresh job list.
 	     ((eqv? c #\r)
 	      (update-jobs (get-joblist) sort-p))
 
-	     ;; Terminal resize events are passed as 'KEY_RESIZE':
+	     ;; Open SSH session on the master node.
+	     ((eqv? c #\s)
+	      (ssh (list-ref (sort joblist sort-p)
+			     (item-index (current-item jobs-menu))))
+	      (loop (getch jobs-pan)))
+
+	     ;; Terminal resize events are passed as 'KEY_RESIZE'.
 	     ((eqv? c KEY_RESIZE)
 	      (%resize)
 	      (loop (getch jobs-pan)))
 
-	     ;; Enter or space: view jobscript
+	     ;; Enter or space: view jobscript.
 	     ((or (eqv? c #\sp)
 		  (eqv? c KEY_ENTER)
 		  (eqv? c #\cr)
