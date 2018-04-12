@@ -214,7 +214,10 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
       (keypad! script-pan #t)
       (keypad! jobs-pan #t)
 
-      (addstr help-pan "<Q>: Quit <Enter>: View script <Up/Down>: Scroll") ;; use acs-darrow / acs uarrow?
+      (addstr help-pan "<Q>: Quit <Enter>: View script <")
+      (addch help-pan (acs-uarrow))
+      (addch help-pan (acs-darrow))
+      (addstr help-pan ">: Scroll <S>: SSH to job's master host")
 
       (let display-jobs ((joblist (get-joblist))
 			 (sort-p (compare job-effic)))
