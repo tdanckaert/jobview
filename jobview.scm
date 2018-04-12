@@ -214,16 +214,19 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 			 (sort-p (compare job-effic)))
 	(let* ((jobs-menu (new-menu (map (cut job->menu-item <> (current-time))
 					 (sort joblist sort-p))))
-	       (refresh-menu (lambda () (drawmenu jobs-menu jobs-pan)))
+	       (update-jobs (lambda (joblist sort-p)
+			      ;; We must unpost the old menu before it gets garbage collected.
+			      (unpost-menu jobs-menu)
+			      (display-jobs joblist sort-p)))
 	       (%resize (lambda ()
 			  (unpost-menu jobs-menu)
 			  (resize jobs-pan (1- (lines)) (cols))
 			  (resize help-pan 1 (cols))
 			  (mvwin help-pan (1- (lines)) 0)
-			  (refresh-menu)))
+			  (drawmenu jobs-menu jobs-pan)))
 	       (show-jobscript (jobscript-viewer script-pan %resize)))
 
-	  (refresh-menu)
+	  (drawmenu jobs-menu jobs-pan)
 	  (update-panels)
 	  (doupdate)
 
@@ -250,31 +253,25 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 
 	     ;; Sort by efficiency/procs/username/...
 	     ((eqv? c #\e)
-	      (unpost-menu jobs-menu)
-  	      (display-jobs joblist (compare job-effic)))
+  	      (update-jobs joblist (compare job-effic)))
 
 	     ((eqv? c #\p)
-	      (unpost-menu jobs-menu)
-	      (display-jobs joblist (compare job-procs)))
+	      (update-jobs joblist (compare job-procs)))
 
 	     ((eqv? c #\u)
-	      (unpost-menu jobs-menu)
-  	      (display-jobs joblist (compare job-user)))
+  	      (update-jobs joblist (compare job-user)))
 
 	     ((eqv? c #\t)
-	      (unpost-menu jobs-menu)
 	      ;; We want to sort by ascending time => sort by
 	      ;; descending start time => negate.
-	      (display-jobs joblist (negate (compare job-tstart))))
+	      (update-jobs joblist (negate (compare job-tstart))))
 
 	     ((eqv? c #\w)
-	      (unpost-menu jobs-menu)
-	      (display-jobs joblist (compare job-walltime)))
+	      (update-jobs joblist (compare job-walltime)))
 
 	     ;; Refresh job list
 	     ((eqv? c #\r)
-	      (unpost-menu jobs-menu)
-	      (display-jobs (get-joblist) sort-p))
+	      (update-jobs (get-joblist) sort-p))
 
 	     ;; Terminal resize events are passed as 'KEY_RESIZE':
 	     ((eqv? c KEY_RESIZE)
@@ -294,7 +291,8 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 
 	     ;; If 'Q' or 'q'  is pressed, quit.  Otherwise, loop.
 	     ((not (or (eqv? c #\Q) (eqv? c #\q)))
-	      (loop (getch jobs-pan)))))))))
+	      (loop (getch jobs-pan)))))
+	  ))))
 
       (lambda  (key . parameters )
 	(endwin)))
