@@ -58,8 +58,8 @@ using the accessor FIELD, e.g. (compare job-effic)."
     (let ((f1 (field job1))
 	  (f2 (field job2)))
       (if (number? f1)
-	  (<= f1 f2)
-	  (string<=? f1 f2)))))
+	  (< f1 f2)
+	  (string<? f1 f2)))))
 
 (define (xml->job x)
   "Create a job record from showq's xml output."
