@@ -148,7 +148,11 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 		       (eqv? c #\nl)))
 	      (process-input (getch panel))))))
 
-	(delwin pad)))))
+	;; Clean up and return.
+	(delwin pad)
+	(hide-panel panel)
+	(update-panels)
+	(doupdate)))))
 
 (define (ssh job)
   (endwin)
@@ -299,9 +303,6 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 		  (eqv? c #\cr)
 		  (eqv? c #\nl))
 	      (show-jobscript (item-name (current-item jobs-menu)))
-	      (hide-panel script-pan)
-	      (update-panels)
-	      (doupdate)
 	      (loop (getch jobs-pan)))
 
 	     ;; If 'Q' or 'q'  is pressed, quit.  Otherwise, loop.
