@@ -217,124 +217,124 @@ for this predicate, sort in the opposite direction."
 ;; collection bug in guile-ncurses v2.2 :-/
 (define menu-list '())
 
-(with-throw-handler #t
-  ;; We use a catch-all exception handler to make sure (endwin) is
-  ;; called before quitting the program.  Otherwise, errors might leave
-  ;; the terminal in a bad state.
-  (lambda ()
+(define (main)
 
-    (let* ((stdscr (initscr))
-	   (script-pan (newwin 0 0 0 0 #:panel #t))
-	   (jobs-pan (newwin (1- (lines)) 0 0 0 #:panel #t))
-	   (help-pan (newwin 1 0 (1- (lines)) 0 #:panel #t)))
+  (define stdscr (initscr))
+  (define script-pan (newwin 0 0 0 0 #:panel #t))
+  (define jobs-pan (newwin (1- (lines)) 0 0 0 #:panel #t))
+  (define help-pan (newwin 1 0 (1- (lines)) 0 #:panel #t))
 
-      (cbreak!)
-      (noecho!)
-      (curs-set 0)
+  (cbreak!)
+  (noecho!)
+  (curs-set 0)
 
-      (keypad! script-pan #t)
-      (keypad! jobs-pan #t)
+  (keypad! script-pan #t)
+  (keypad! jobs-pan #t)
 
-      (addstr help-pan "<Q>: Quit <Enter>: View script <")
-      (addch help-pan (acs-uarrow))
-      (addch help-pan (acs-darrow))
-      (addstr help-pan ">: Scroll <S>: SSH to job master host <F5>: Refresh")
+  (addstr help-pan "<Q>: Quit <Enter>: View script <")
+  (addch help-pan (acs-uarrow))
+  (addch help-pan (acs-darrow))
+  (addstr help-pan ">: Scroll <S>: SSH to job master host <F5>: Refresh")
 
-      (let display-jobs ((jobs (get-joblist))
-			 (sort-p (compare job-effic)))
-	(let* ((jobs (sort-up-down jobs sort-p))
-	       (jobs-menu (new-menu (map (cut job->menu-item <> (current-time))
-					 jobs)))
-	       (update-jobs (lambda (joblist sort-p)
-			      ;; We must unpost the old menu before it gets garbage collected.
-			      (unpost-menu jobs-menu)
-			      (display-jobs joblist sort-p)))
-	       (%resize (lambda ()
+  (let display-jobs ((jobs (get-joblist))
+		     (sort-p (compare job-effic)))
+    (let* ((jobs (sort-up-down jobs sort-p))
+	   (jobs-menu (new-menu (map (cut job->menu-item <> (current-time))
+				     jobs)))
+	   (update-jobs (lambda (joblist sort-p)
+			  ;; We must unpost the old menu before it gets garbage collected.
 			  (unpost-menu jobs-menu)
-			  (resize jobs-pan (1- (lines)) (cols))
-			  (resize help-pan 1 (cols))
-			  (mvwin help-pan (1- (lines)) 0)
-			  (drawmenu jobs-menu jobs-pan)))
-	       (show-jobscript (jobscript-viewer script-pan %resize)))
+			  (display-jobs joblist sort-p)))
+	   (%resize (lambda ()
+		      (unpost-menu jobs-menu)
+		      (resize jobs-pan (1- (lines)) (cols))
+		      (resize help-pan 1 (cols))
+		      (mvwin help-pan (1- (lines)) 0)
+		      (drawmenu jobs-menu jobs-pan)))
+	   (show-jobscript (jobscript-viewer script-pan %resize)))
 
-	  ;; Store this menu in menu-list to prevent garbage collection later on.
-	  (set! menu-list (cons jobs-menu menu-list))
+      ;; Store this menu in menu-list to prevent garbage collection later on.
+      (set! menu-list (cons jobs-menu menu-list))
 
-	  (drawmenu jobs-menu jobs-pan)
-	  (update-panels)
-	  (doupdate)
+      (drawmenu jobs-menu jobs-pan)
+      (update-panels)
+      (doupdate)
 
-	  ;; Main input loop.
-	  (let loop ((c (getch jobs-pan)))
-	    (cond
+      ;; Main input loop.
+      (let loop ((c (getch jobs-pan)))
+	(cond
 
-	     ;; Handle (Page)Up/(Page)Down keys:
-	     ((eqv? c KEY_DOWN)
-	      (menu-driver jobs-menu REQ_DOWN_ITEM)
-	      (loop (getch jobs-pan)))
+	 ;; Handle (Page)Up/(Page)Down keys:
+	 ((eqv? c KEY_DOWN)
+	  (menu-driver jobs-menu REQ_DOWN_ITEM)
+	  (loop (getch jobs-pan)))
 
-	     ((eqv? c KEY_NPAGE)
-	      (menu-driver jobs-menu REQ_SCR_DPAGE)
-	      (loop (getch jobs-pan)))
+	 ((eqv? c KEY_NPAGE)
+	  (menu-driver jobs-menu REQ_SCR_DPAGE)
+	  (loop (getch jobs-pan)))
 
-	     ((eqv? c KEY_UP)
-	      (menu-driver jobs-menu REQ_UP_ITEM)
-	      (loop (getch jobs-pan)))
+	 ((eqv? c KEY_UP)
+	  (menu-driver jobs-menu REQ_UP_ITEM)
+	  (loop (getch jobs-pan)))
 
-	     ((eqv? c KEY_PPAGE)
-	      (menu-driver jobs-menu REQ_SCR_UPAGE)
-	      (loop (getch jobs-pan)))
+	 ((eqv? c KEY_PPAGE)
+	  (menu-driver jobs-menu REQ_SCR_UPAGE)
+	  (loop (getch jobs-pan)))
 
-	     ;; Sort by efficiency/procs/username/...
-	     ((eqv? c #\i)
-	      (update-jobs jobs (compare job-id)))
+	 ;; Sort by efficiency/procs/username/...
+	 ((eqv? c #\i)
+	  (update-jobs jobs (compare job-id)))
 
-	     ((eqv? c #\u)
-  	      (update-jobs jobs (compare job-user)))
+	 ((eqv? c #\u)
+	  (update-jobs jobs (compare job-user)))
 
-	     ((eqv? c #\n)
-	      (update-jobs jobs (compare job-name)))
+	 ((eqv? c #\n)
+	  (update-jobs jobs (compare job-name)))
 
-	     ((eqv? c #\p)
-	      (update-jobs jobs (compare job-procs)))
+	 ((eqv? c #\p)
+	  (update-jobs jobs (compare job-procs)))
 
-	     ((eqv? c #\e)
-  	      (update-jobs jobs (compare job-effic)))
+	 ((eqv? c #\e)
+	  (update-jobs jobs (compare job-effic)))
 
-	     ((eqv? c #\r)
-	      (update-jobs jobs (compare time-end)))
+	 ((eqv? c #\r)
+	  (update-jobs jobs (compare time-end)))
 
-	     ((eqv? c #\t)
-	      (update-jobs jobs (compare job-tstart)))
+	 ((eqv? c #\t)
+	  (update-jobs jobs (compare job-tstart)))
 
-	     ;; Refresh job list.
-	     ((eqv? c (key-f 5))
-	      (update-jobs (get-joblist) sort-p))
+	 ;; Refresh job list.
+	 ((eqv? c (key-f 5))
+	  (update-jobs (get-joblist) sort-p))
 
-	     ;; Open SSH session on the master node.
-	     ((eqv? c #\s)
-	      (ssh (list-ref jobs (item-index (current-item jobs-menu))))
-	      (loop (getch jobs-pan)))
+	 ;; Open SSH session on the master node.
+	 ((eqv? c #\s)
+	  (ssh (list-ref jobs (item-index (current-item jobs-menu))))
+	  (loop (getch jobs-pan)))
 
-	     ;; Terminal resize events are passed as 'KEY_RESIZE'.
-	     ((eqv? c KEY_RESIZE)
-	      (%resize)
-	      (loop (getch jobs-pan)))
+	 ;; Terminal resize events are passed as 'KEY_RESIZE'.
+	 ((eqv? c KEY_RESIZE)
+	  (%resize)
+	  (loop (getch jobs-pan)))
 
-	     ;; Enter or space: view jobscript.
-	     ((or (eqv? c #\sp)
-		  (eqv? c KEY_ENTER)
-		  (eqv? c #\cr)
-		  (eqv? c #\nl))
-	      (show-jobscript (item-name (current-item jobs-menu)))
-	      (loop (getch jobs-pan)))
+	 ;; Enter or space: view jobscript.
+	 ((or (eqv? c #\sp)
+	      (eqv? c KEY_ENTER)
+	      (eqv? c #\cr)
+	      (eqv? c #\nl))
+	  (show-jobscript (item-name (current-item jobs-menu)))
+	  (loop (getch jobs-pan)))
 
-	     ;; If 'Q' or 'q'  is pressed, quit.  Otherwise, loop.
-	     ((not (or (eqv? c #\Q) (eqv? c #\q)))
-	      (loop (getch jobs-pan)))))
-	  ))))
+	 ;; If 'Q' or 'q'  is pressed, quit.  Otherwise, loop.
+	 ((not (or (eqv? c #\Q) (eqv? c #\q)))
+	  (loop (getch jobs-pan))))))))
 
-      (lambda  (key . parameters )
-	(endwin)))
+;; We use a catch-all exception handler to make sure (endwin) is
+;; called before quitting the program.  Otherwise, errors might leave
+;; the terminal in a bad state.
+(with-throw-handler #t
+  main
+  (lambda  (key . parameters )
+    (endwin)))
 
 (endwin)
