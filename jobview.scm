@@ -51,6 +51,10 @@ list (hours minutes seconds)."
   (tstart job-tstart)
   (walltime job-walltime))
 
+(define (time-end job)
+  "The time when a job must be done, based on its start time and requested walltime."
+  (+ (job-tstart job) (job-walltime job)))
+
 (define (compare field)
   "Returns a two-argument procedure that compares two job records
 using the accessor FIELD, e.g. (compare job-effic)."
@@ -177,8 +181,8 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
   (box panel 0 0)
   (move panel 1 4)
   ;; Menu title
-  (addstr panel (format #f "Jobid ~8a ~a ~36t ~a ~6a  ~8a  ~a"
-			"User" "JobName" "Procs" "Eff" "Time" "Walltime"))
+  (addstr panel (format #f "~5a ~8a ~20a ~a ~6,@a  ~8a  ~a"
+			"Id" "User" "Name" "Procs" "Effic" "Remain" "Time started"))
 
   (move panel 2 0)
   (addch panel (acs-ltee))
@@ -192,13 +196,16 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 (define (job->menu-item job tnow)
   (let ((walltime-format "~2,'0d:~2,'0d:~2,'0d"))
     (new-item (number->string (job-id job))
-	      (format #f "~a ~20@y ~30t ~5a ~6,2f  ~k  ~k"
+	      (format #f "~a ~20@y~29t ~5a ~6,2f  ~k  ~a"
 		      (job-user job)
 		      (job-name job)
 		      (job-procs job)
 		      (job-effic job)
-		      walltime-format (hour-min-sec (- tnow (job-tstart job)))
-		      walltime-format (hour-min-sec (job-walltime job))))))
+		      ;; Remaining time:
+		      walltime-format (hour-min-sec (- (+ (job-tstart job)
+							  (job-walltime job))
+						       tnow))
+		      (strftime "%c" (localtime (job-tstart job)))))))
 
 (define (sort-up-down list less)
   "Sort LIST according to predicate LESS.  If LIST is already sorted
@@ -231,7 +238,7 @@ for this predicate, sort in the opposite direction."
       (addstr help-pan "<Q>: Quit <Enter>: View script <")
       (addch help-pan (acs-uarrow))
       (addch help-pan (acs-darrow))
-      (addstr help-pan ">: Scroll <S>: SSH to job's master host")
+      (addstr help-pan ">: Scroll <S>: SSH to job master host <F5>: Refresh")
 
       (let display-jobs ((jobs (get-joblist))
 			 (sort-p (compare job-effic)))
@@ -279,23 +286,29 @@ for this predicate, sort in the opposite direction."
 	      (loop (getch jobs-pan)))
 
 	     ;; Sort by efficiency/procs/username/...
-	     ((eqv? c #\e)
-  	      (update-jobs jobs (compare job-effic)))
-
-	     ((eqv? c #\p)
-	      (update-jobs jobs (compare job-procs)))
+	     ((eqv? c #\i)
+	      (update-jobs jobs (compare job-id)))
 
 	     ((eqv? c #\u)
   	      (update-jobs jobs (compare job-user)))
 
+	     ((eqv? c #\n)
+	      (update-jobs jobs (compare job-name)))
+
+	     ((eqv? c #\p)
+	      (update-jobs jobs (compare job-procs)))
+
+	     ((eqv? c #\e)
+  	      (update-jobs jobs (compare job-effic)))
+
+	     ((eqv? c #\r)
+	      (update-jobs jobs (compare time-end)))
+
 	     ((eqv? c #\t)
 	      (update-jobs jobs (compare job-tstart)))
 
-	     ((eqv? c #\w)
-	      (update-jobs jobs (compare job-walltime)))
-
 	     ;; Refresh job list.
-	     ((eqv? c #\r)
+	     ((eqv? c (key-f 5))
 	      (update-jobs (get-joblist) sort-p))
 
 	     ;; Open SSH session on the master node.
