@@ -200,6 +200,12 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 		      walltime-format (hour-min-sec (- tnow (job-tstart job)))
 		      walltime-format (hour-min-sec (job-walltime job))))))
 
+(define (sort-up-down list less)
+  "Sort LIST according to predicate LESS.  If LIST is already sorted
+for this predicate, sort in the opposite direction."
+  (sort list
+	(if (sorted? list less) (negate less) less)))
+
 ;; We keep all generated menus in a list to work around a garbage
 ;; collection bug in guile-ncurses v2.2 :-/
 (define menu-list '())
@@ -227,10 +233,11 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
       (addch help-pan (acs-darrow))
       (addstr help-pan ">: Scroll <S>: SSH to job's master host")
 
-      (let display-jobs ((joblist (get-joblist))
+      (let display-jobs ((jobs (get-joblist))
 			 (sort-p (compare job-effic)))
-	(let* ((jobs-menu (new-menu (map (cut job->menu-item <> (current-time))
-					 (sort joblist sort-p))))
+	(let* ((jobs (sort-up-down jobs sort-p))
+	       (jobs-menu (new-menu (map (cut job->menu-item <> (current-time))
+					 jobs)))
 	       (update-jobs (lambda (joblist sort-p)
 			      ;; We must unpost the old menu before it gets garbage collected.
 			      (unpost-menu jobs-menu)
@@ -273,21 +280,19 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 
 	     ;; Sort by efficiency/procs/username/...
 	     ((eqv? c #\e)
-  	      (update-jobs joblist (compare job-effic)))
+  	      (update-jobs jobs (compare job-effic)))
 
 	     ((eqv? c #\p)
-	      (update-jobs joblist (compare job-procs)))
+	      (update-jobs jobs (compare job-procs)))
 
 	     ((eqv? c #\u)
-  	      (update-jobs joblist (compare job-user)))
+  	      (update-jobs jobs (compare job-user)))
 
 	     ((eqv? c #\t)
-	      ;; We want to sort by ascending time => sort by
-	      ;; descending start time => negate.
-	      (update-jobs joblist (negate (compare job-tstart))))
+	      (update-jobs jobs (compare job-tstart)))
 
 	     ((eqv? c #\w)
-	      (update-jobs joblist (compare job-walltime)))
+	      (update-jobs jobs (compare job-walltime)))
 
 	     ;; Refresh job list.
 	     ((eqv? c #\r)
@@ -295,8 +300,7 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 
 	     ;; Open SSH session on the master node.
 	     ((eqv? c #\s)
-	      (ssh (list-ref (sort joblist sort-p)
-			     (item-index (current-item jobs-menu))))
+	      (ssh (list-ref jobs (item-index (current-item jobs-menu))))
 	      (loop (getch jobs-pan)))
 
 	     ;; Terminal resize events are passed as 'KEY_RESIZE'.
