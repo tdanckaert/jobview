@@ -200,6 +200,10 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 		      walltime-format (hour-min-sec (- tnow (job-tstart job)))
 		      walltime-format (hour-min-sec (job-walltime job))))))
 
+;; We keep all generated menus in a list to work around a garbage
+;; collection bug in guile-ncurses v2.2 :-/
+(define menu-list '())
+
 (with-throw-handler #t
   ;; We use a catch-all exception handler to make sure (endwin) is
   ;; called before quitting the program.  Otherwise, errors might leave
@@ -238,6 +242,9 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 			  (mvwin help-pan (1- (lines)) 0)
 			  (drawmenu jobs-menu jobs-pan)))
 	       (show-jobscript (jobscript-viewer script-pan %resize)))
+
+	  ;; Store this menu in menu-list to prevent garbage collection later on.
+	  (set! menu-list (cons jobs-menu menu-list))
 
 	  (drawmenu jobs-menu jobs-pan)
 	  (update-panels)
