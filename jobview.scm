@@ -12,6 +12,33 @@
 	     (ncurses menu)
 	     (ncurses panel))
 
+;; The cluster on which we are running, or #f if none:
+(define *host-cluster*
+  (getenv "VSC_INSTITUTE_CLUSTER"))
+
+;; The cluster from which we want to obtain information:
+(define *target-cluster*
+  (let ((args (program-arguments)))
+    (if (> (length args) 1)
+	(second args)
+	*host-cluster*)))
+
+;; If no *target-cluster* is known, there is not much we can do:
+(or *target-cluster*
+    (error "Please specify the cluster name."))
+
+(define (cat-jobscript jobid)
+  "An external command which outputs the jobscript for JOBID on stdout."
+  (format #f "ssh master-~a.uantwerpen.be sudo /bin/cat /var/spool/torque/server_priv/jobs/~a.~a.SC"
+	  *target-cluster*
+	  jobid
+	  *target-cluster*))
+
+(define (showq)
+  "An external command which prints an XML-formatted list of all
+active jobs on stdout."
+  (format #f "ssh login-~a.uantwerpen.be showq -r --xml" *target-cluster*))
+
 (define (read-stdout cmd)
   "Run CMD as an external process, and capture stdout.  stderr is
 redirected to avoid conflicts with the curses interface."
@@ -91,18 +118,13 @@ using the accessor FIELD, e.g. (compare job-effic)."
   (catch 'cmd-failed
     (lambda ()
       (map xml->job ((sxpath '(// Data queue job))
-		     (xml->sxml (read-stdout "ssh login-hopper.uantwerpen.be showq -r --xml")))))
-    (lambda (key cmd status)
-      (format (current-error-port)
-	      "ERROR: Could not obtain job list.: command '~a' returned ~d.\n"
-	       cmd status)
-      (quit 1))))
+		     (xml->sxml (read-stdout (showq))))))
+   (lambda (key cmd status)
+     (error (format #f "ERROR: Could not obtain job list: command '~a' returned ~d.\n" cmd status)))))
 
 (define (get-jobscript jobid)
   (catch 'cmd-failed
-    (lambda () (read-stdout
-		(format #f "ssh master-hopper.uantwerpen.be sudo /bin/cat /var/spool/torque/server_priv/jobs/~a.hopper.SC"
-			jobid)))
+    (lambda () (read-stdout (cat-jobscript jobid )))
     (lambda (key cmd status)
       (format #f
 	      "ERROR: Could not get script for job ~a.
