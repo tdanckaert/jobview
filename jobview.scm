@@ -186,6 +186,43 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 		  (job-host job)))
   (doupdate))
 
+;; Column width, label, and formatting for the job menu:
+(define *menu-table*
+  `((5 "Id" "~a")
+    (8 "User" "~a")
+    (20 "Name" "~20@y")
+    (5 "Procs" "~5a")
+    (7 "Effic" "~6,2f ") ; floating point efficiency, e.g. ' 99.05'
+    (9 "Remain" "~{~2,'0d~^:~} ") ; remaining time in hh:mm:ss format
+    (26 "Time started" "~a")))
+
+(define (write-menu-title win)
+  (let ((y-start (getcury win)))
+    (for-each
+     (lambda (menu-col)
+       (let ((x-start (getcurx win))
+	     (width (first menu-col))
+	     (title (second menu-col)))
+	 ;; write first character of each colunn label in bold to
+	 ;; indicate it's a key command:
+	 (addch win (bold (string-ref title 0)))
+	 (addstr win (substring title 1))
+	 (move win y-start (+ x-start 1 width))))
+     *menu-table*)))
+
+(define (format-table-row table . data)
+  (let ((format-string
+	 (string-join
+	  (append-map
+	   (lambda (table-col) (list "~vt" (third table-col))) table) ""))
+	(column-numbers
+	 (reverse
+	  (fold
+	   (lambda (table-col previous)
+	     (cons (+ 1 (first table-col) (car previous)) previous))
+	   '(0) table))))
+    (apply format `(#f ,format-string ,@(apply append (zip column-numbers data))))))
+
 (define (drawmenu menu panel)
 
   ;; Set the main window and subwindow
@@ -202,9 +239,9 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
   ;; Print a border around the main window.
   (box panel 0 0)
   (move panel 1 4)
+
   ;; Menu title
-  (addstr panel (format #f "~5a ~8a ~20a ~a ~6,@a  ~8a  ~a"
-			"Id" "User" "Name" "Procs" "Effic" "Remain" "Time started"))
+  (write-menu-title panel)
 
   (move panel 2 0)
   (addch panel (acs-ltee))
@@ -216,18 +253,18 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
   (post-menu menu))
 
 (define (job->menu-item job tnow)
-  (let ((walltime-format "~2,'0d:~2,'0d:~2,'0d"))
-    (new-item (number->string (job-id job))
-	      (format #f "~a ~20@y~29t ~5a ~6,2f  ~k  ~a"
-		      (job-user job)
-		      (job-name job)
-		      (job-procs job)
-		      (job-effic job)
-		      ;; Remaining time:
-		      walltime-format (hour-min-sec (- (+ (job-tstart job)
-							  (job-walltime job))
-						       tnow))
-		      (strftime "%c" (localtime (job-tstart job)))))))
+  (new-item
+   (number->string (job-id job))
+   (format-table-row (cdr *menu-table*) ; first column 'id' is the menu item name
+		     (job-user job)
+		     (job-name job)
+		     (job-procs job)
+		     (job-effic job)
+		     ;; Remaining time:
+		     (hour-min-sec (- (+ (job-tstart job)
+					 (job-walltime job))
+				      tnow))
+		     (strftime "%c" (localtime (job-tstart job))))))
 
 (define (sort-up-down list less)
   "Sort LIST according to predicate LESS.  If LIST is already sorted
