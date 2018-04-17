@@ -223,6 +223,19 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 	   '(0) table))))
     (apply format `(#f ,format-string ,@(apply append (zip column-numbers data))))))
 
+(define (addstr-formatted win str)
+  "Add string STR to window WIN, using bold characters for all text enclosed in < >."
+  (let ((bold-start (string-index str #\<))
+	(bold-end (string-index str #\>)))
+    (if (not bold-start)
+	(addstr win str)
+	(begin
+	  (addstr win (substring str 0 bold-start))
+	  (attr-set! win A_BOLD)
+	  (addstr win (substring str (1+ bold-start) bold-end))
+	  (attr-set! win A_NORMAL)
+	  (addstr-formatted win (substring str (1+ bold-end )))))))
+
 (define (drawmenu menu panel)
 
   ;; Set the main window and subwindow
@@ -290,10 +303,13 @@ for this predicate, sort in the opposite direction."
   (keypad! script-pan #t)
   (keypad! jobs-pan #t)
 
-  (addstr help-pan "<Q>: Quit <Enter>: View script <")
+  (move help-pan 0 4)
+  (addstr-formatted help-pan "<Q> Quit <Enter> View Script ")
+  (attr-set! help-pan A_BOLD)
   (addch help-pan (acs-uarrow))
   (addch help-pan (acs-darrow))
-  (addstr help-pan ">: Scroll <S>: SSH to job master host <F5>: Refresh")
+  (attr-set! help-pan A_NORMAL)
+  (addstr-formatted help-pan " Scroll <S> SSH to job master host <F5> Refresh")
 
   (let display-jobs ((jobs (get-joblist))
 		     (sort-p (compare job-effic)))
