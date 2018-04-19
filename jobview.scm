@@ -131,54 +131,100 @@ using the accessor FIELD, e.g. (compare job-effic)."
 command '~a' returned ~d.\n"
 	      jobid cmd status))))
 
+(define (draw-box win y x ny nx)
+  "Draw a box of dimensions NY * NX, with upper left coordinates Y and X."
+  (move win y x)
+  (vline win (acs-vline) ny)
+  (addch win (acs-ulcorner))
+  (hline win (acs-hline) (- nx 2))
+  (move win y (+ x (1- nx)))
+  (vline win (acs-vline) ny)
+  (addch win (acs-urcorner))
+  (move win (+ y (1- ny)) x)
+  (addch win (acs-llcorner))
+  (hline win (acs-hline) (- nx 2))
+  (move win (+ y (1- ny)) (+ x (1- nx)))
+  (addch win (acs-lrcorner)))
+
+(define (submitted-command jobid)
+  "Return the command used to submit job with JOBID, by retrieving
+<init_work_dir> and <submit_args> from qstat -fx."
+  (let* ((jobxml (xml->sxml (read-stdout
+			    (format #f "ssh login-~a.uantwerpen.be qstat -fx ~a"
+				    *target-cluster* jobid))))
+	 ;; Query for the child nodes of  <Job> we are interested in:
+	 (query (sxpath `(// Data Job ,(node-or (sxpath '(init_work_dir))
+						(sxpath '(submit_args)))))))
+    (sxml-match (query jobxml)
+		[(list (init_work_dir ,dir) (submit_args ,args))
+		 ;; "workdir/args" should give us the file name of the submitted jobscript, possibly with some extra arguments
+		 (string-append dir "$ qsub " args)])))
+
 (define (jobscript-viewer panel %resize)
   "Return a procedure that, given a JOBID, displays that jobscript in
 PANEL.  Procedure %RESIZE will be called when the terminal is resized."
   (lambda (jobid)
-    (let show-script ((script (get-jobscript jobid)))
-      (erase panel)
-      (show-panel panel)
-      (update-panels)
-      (doupdate)
-      (let* ((nlines (number-of-lines script))
-	     (nrows (getmaxy panel))
-	     (ncols (getmaxx panel)) ; TODO: check max #cols of script, and set ncols accordingly?
-	     (pad (newpad nlines ncols)))
-	(addstr pad script)
+    (erase panel)
+    (show-panel panel)
 
-	;; Read input, and scroll the script inside the window if up/down is pressed.
-	(let refresh-pad ((current-line 0))
-	  (prefresh pad current-line 0
-		    (getbegy panel) (getbegx panel)
-		    (1- nrows) (1- ncols))
-	  (let process-input ((c (getch panel)))
-	    (cond
+    (let ((submission (submitted-command jobid)))
+      (let show-script ((script (get-jobscript jobid)))
+	(let* ((nlines (number-of-lines script))
+	       (pan-height (getmaxy panel))
+	       (pan-width (getmaxx panel))
 
-	     ((and (eqv? c KEY_DOWN)
-		   (> nlines (+ current-line nrows)))
-	      (refresh-pad (1+ current-line)))
+	       ;; TODO: check max #cols of script, and set ncols
+	       ;; accordingly, or take into account the wrapping of long
+	       ;; lines of the script on multiple lines of the pad
+	       ;; (effectively increasing nlines).
+	       (nrows (- pan-height 4))
+	       (ncols (- pan-width 2))
+	       (pad (newpad nlines ncols)))
 
-	     ((and (eqv? c KEY_UP) (> current-line 0))
-	      (refresh-pad (1- current-line)))
+	  (addstr panel submission)
+	  (draw-box panel 1 0 (- pan-height 2) pan-width)
+	  (move panel (1- pan-height) 1)
+	  (addstr-formatted panel "<Q Enter Space> Go back")
+	  (addstr pad script)
 
-	     ((eqv? c KEY_RESIZE)
-	      (%resize)
-	      ;; resize function will reset the whole display, so run
-	      ;; show-script again.
-	      (show-script script))
+	  (update-panels)
+	  (doupdate)
 
-	     ;; Return if we get enter/space/q, otherwise read a new input character.
-	     ((not (or (eqv? c #\sp)
-		       (eqv? c KEY_ENTER)
-		       (eqv? c #\cr)
-		       (eqv? c #\nl)))
-	      (process-input (getch panel))))))
+	  ;; Read input, and scroll the script inside the window if up/down is pressed.
+	  (let refresh-pad ((current-line 0))
+	    (prefresh pad current-line 0
+		      (+ 2 (getbegy panel)) (+ 1 (getbegx panel))
+		      (+ 1 (getbegy panel) nrows) (+ (getbegx panel) ncols))
+	    (let process-input ((c (getch panel)))
+	      (cond
 
-	;; Clean up and return.
-	(delwin pad)
-	(hide-panel panel)
-	(update-panels)
-	(doupdate)))))
+	       ((and (eqv? c KEY_DOWN)
+		     (> nlines (+ current-line nrows)))
+		(refresh-pad (1+ current-line)))
+
+	       ((and (eqv? c KEY_UP) (> current-line 0))
+		(refresh-pad (1- current-line)))
+
+	       ((eqv? c KEY_RESIZE)
+		(%resize)
+		;; resize function will reset the whole display, so run
+		;; show-script again.
+		(show-script script))
+
+	       ;; Return if we get enter/space/q, otherwise read a new input character.
+	       ((not (or (eqv? c #\sp)
+			 (eqv? c KEY_ENTER)
+			 (eqv? c #\cr)
+			 (eqv? c #\nl)
+			 (eqv? c #\q)
+			 (eqv? c #\Q)))
+		(process-input (getch panel))))))
+
+	  ;; Clean up and return.
+	  (delwin pad)
+	  (hide-panel panel)
+	  (update-panels)
+	  (doupdate))))))
 
 (define (ssh job)
   (endwin)
