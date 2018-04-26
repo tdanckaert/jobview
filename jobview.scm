@@ -118,49 +118,52 @@ using the accessor FIELD, e.g. (compare job-effic)."
 
 (define (sxml->job x)
   "Create a job record from showq's xml output."
-  (sxml-match x [(job (@ (User ,user)
-			 (JobID ,id)
-			 (JobName ,name)
-			 (ReqProcs ,procs)
-			 (MasterHost ,host)
-			 (StatPSUtl ,psutil)
-			 (StartTime ,tstart)
-			 (ReqNodes (,nodes #f)) ; "ReqNodes" is missing for some job requests
-			 (AWDuration ,used-walltime)
-			 (ReqAWDuration ,walltime)
-			 . ,rest ))
-		 (let ((id (string->number id))
-		       (procs (string->number procs))
-		       (nodes (and nodes (string->number nodes)))
-		       (psutil (string->number psutil))
-		       (tstart (string->number tstart))
-		       (walltime (string->number walltime))
-		       (used-walltime (string->number used-walltime)))
-		   (make-job user
-			     id
-			     name
-			     procs
-			     host
-			     ;; To calculate efficiency, we could use
-			     ;; the XML entry "StatsPSDed", demanded
-			     ;; processor time, but this entry is
-			     ;; missing if resources were requested as
-			     ;; follows: "tasks=<x>:lprocs=all".
-			     (* 100 (/ psutil
-				       ;; if ReqProcs is negative, this seems to mean
-				       ;; the resource request was
-				       ;;
-				       ;; "tasks=-(ReqProcs):lprocs=all",
-				       ;;
-				       ;; so we can calculate the number of cores as
-				       ;; -1 * ReqProcs * (number of cores per node)
-				       (* (if (> procs 0)
-					      procs
-					      (* -1 procs
-						 (node-procs (hash-ref *node-properties* host))))
-					  used-walltime)))
-			     tstart
-			     walltime))]))
+  (catch #t
+    (lambda ()
+      (sxml-match x [(job (@ (User ,user)
+			     (JobID ,id)
+			     (JobName ,name)
+			     (ReqProcs ,procs)
+			     (MasterHost ,host)
+			     (StatPSUtl ,psutil)
+			     (StartTime ,tstart)
+			     (AWDuration (,used-walltime "0")) ; "AWDuration" is missing for jobs that have just started
+			     (ReqAWDuration ,walltime)
+			     . ,rest ))
+		     (let ((id (string->number id))
+			   (procs (string->number procs))
+			   (psutil (string->number psutil))
+			   (tstart (string->number tstart))
+			   (walltime (string->number walltime))
+			   (used-walltime (string->number used-walltime)))
+		       (make-job user id name procs host
+				 ;; To calculate efficiency, we could use
+				 ;; the XML entry "StatsPSDed", demanded
+				 ;; processor time, but this entry is
+				 ;; missing if resources were requested as
+				 ;; follows: "tasks=<x>:lprocs=all".
+				 (* 100 (/ psutil
+					   ;; if ReqProcs is negative, this seems to mean
+					   ;; the resource request was
+					   ;;
+					   ;; "tasks=-(ReqProcs):lprocs=all",
+					   ;;
+					   ;; so the actual number of requested procs is
+					   ;;
+					   ;; -1 * ReqProcs * (number of cores per node)
+					   (* (if (> procs 0)
+						  procs
+						  (* -1 procs
+						     (node-procs (hash-ref *node-properties* host))))
+					      ;; If used-walltime is 0, round up to 1 second to avoid division by 0:
+					      (max used-walltime 1))))
+				 tstart walltime))]))
+    (lambda (key . parameters)
+      (endwin)
+      (format #t "Failed to match job SXML expression~%~y
+This is a bug.~%" x)
+      (throw key parameters))))
+
 (define (get-joblist)
   (catch 'cmd-failed
     (lambda ()
