@@ -1,5 +1,6 @@
 (use-modules (srfi srfi-1)
 	     (srfi srfi-9)
+	     (srfi srfi-13)
 	     (srfi srfi-26)
 	     (ice-9 format)
 	     (ice-9 popen)
@@ -52,6 +53,29 @@ redirected to avoid conflicts with the curses interface."
 	  (throw 'cmd-failed cmd status))
       stdout)))
 
+(define-record-type <node>
+  (make-node procs mem)
+  node?
+  (procs node-procs)
+  (mem node-mem))
+
+(define *node-properties*
+  (let* ((nodes ((sxpath '(// Data node))
+		 (xml->sxml (read-stdout
+			     (format #f "ssh login-~a.uantwerpen.be checknode ALL --xml"
+				     *target-cluster*)))))
+	 (table (make-hash-table (length nodes))))
+    (for-each
+     (lambda (the-node)
+       (sxml-match the-node [(node (@ (NODEID ,id)
+				      (RCPROC ,rcproc)
+				      (RCMEM (,rcmem "0"))))
+			     (hash-set! table id
+					(make-node (string->number rcproc)
+						   (string->number rcmem)))]))
+     nodes)
+    table))
+
 (define (number-of-lines string)
   "Returns 1 + (number of newlines in STRING)."
   (string-fold (lambda (char count)
@@ -92,7 +116,7 @@ using the accessor FIELD, e.g. (compare job-effic)."
 	  (< f1 f2)
 	  (string<? f1 f2)))))
 
-(define (xml->job x)
+(define (sxml->job x)
   "Create a job record from showq's xml output."
   (sxml-match x [(job (@ (User ,user)
 			 (JobID ,id)
@@ -100,24 +124,47 @@ using the accessor FIELD, e.g. (compare job-effic)."
 			 (ReqProcs ,procs)
 			 (MasterHost ,host)
 			 (StatPSUtl ,psutil)
-			 (StatPSDed ,psdemand)
 			 (StartTime ,tstart)
+			 (ReqNodes (,nodes #f)) ; "ReqNodes" is missing for some job requests
+			 (AWDuration ,used-walltime)
 			 (ReqAWDuration ,walltime)
 			 . ,rest ))
-		 (make-job user
-			   (string->number id)
-			   name
-			   (string->number procs)
-			   host
-			   (* 100 (/ (string->number psutil)
-				     (string->number psdemand)))
-			   (string->number tstart)
-			   (string->number walltime))]))
-
+		 (let ((id (string->number id))
+		       (procs (string->number procs))
+		       (nodes (and nodes (string->number nodes)))
+		       (psutil (string->number psutil))
+		       (tstart (string->number tstart))
+		       (walltime (string->number walltime))
+		       (used-walltime (string->number used-walltime)))
+		   (make-job user
+			     id
+			     name
+			     procs
+			     host
+			     ;; To calculate efficiency, we could use
+			     ;; the XML entry "StatsPSDed", demanded
+			     ;; processor time, but this entry is
+			     ;; missing if resources were requested as
+			     ;; follows: "tasks=<x>:lprocs=all".
+			     (* 100 (/ psutil
+				       ;; if ReqProcs is negative, this seems to mean
+				       ;; the resource request was
+				       ;;
+				       ;; "tasks=-(ReqProcs):lprocs=all",
+				       ;;
+				       ;; so we can calculate the number of cores as
+				       ;; -1 * ReqProcs * (number of cores per node)
+				       (* (if (> procs 0)
+					      procs
+					      (* -1 procs
+						 (node-procs (hash-ref *node-properties* host))))
+					  used-walltime)))
+			     tstart
+			     walltime))]))
 (define (get-joblist)
   (catch 'cmd-failed
     (lambda ()
-      (map xml->job ((sxpath '(// Data queue job))
+      (map sxml->job ((sxpath '(// Data queue job))
 		     (xml->sxml (read-stdout (showq))))))
    (lambda (key cmd status)
      (error (format #f "ERROR: Could not obtain job list: command '~a' returned ~d.\n" cmd status)))))
