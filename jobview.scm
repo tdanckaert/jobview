@@ -3,6 +3,7 @@
 	     (srfi srfi-13)
 	     (srfi srfi-26)
 	     (ice-9 format)
+	     (ice-9 match)
 	     (ice-9 popen)
 	     (ice-9 rdelim)
 	     (ice-9 textual-ports)
@@ -234,7 +235,8 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 	  (addstr panel submission)
 	  (draw-box panel 1 0 (- pan-height 2) pan-width)
 	  (move panel (1- pan-height) 1)
-	  (addstr-formatted panel "<Q Enter Space> Go back")
+	  (addstr-formatted panel
+			    `(b "Q Enter Space") " Go back")
 	  (addstr pad script)
 
 	  (update-panels)
@@ -319,18 +321,24 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 	   '(0) table))))
     (apply format `(#f ,format-string ,@(apply append (zip column-numbers data))))))
 
-(define (addstr-formatted win str)
-  "Add string STR to window WIN, using bold characters for all text enclosed in < >."
-  (let ((bold-start (string-index str #\<))
-	(bold-end (string-index str #\>)))
-    (if (not bold-start)
-	(addstr win str)
-	(begin
-	  (addstr win (substring str 0 bold-start))
-	  (attr-set! win A_BOLD)
-	  (addstr win (substring str (1+ bold-start) bold-end))
-	  (attr-set! win A_NORMAL)
-	  (addstr-formatted win (substring str (1+ bold-end )))))))
+(define (addstr-formatted win . strings)
+  "Add STRINGS to window WIN, using bold characters for all strings enclosed in (b  )."
+  (match strings
+    ((('b . boldstrings) . rest)
+     (let ((old-attrs (attr-get win)))
+       (attr-set! win A_BOLD)
+       (apply addstr-formatted `(,win ,@boldstrings (attrs ,(car old-attrs))
+				      ,@rest))))
+    ((('attrs oldattrs) . rest)
+     (attr-set! win oldattrs)
+     (apply addstr-formatted `(,win ,@rest)))
+    (((? xchar? c) . rest)
+     (addch win c)
+     (apply addstr-formatted `(,win ,@rest)))
+    ((string . rest)
+     (addstr win string)
+     (apply addstr-formatted `(,win ,@rest)))
+    (() #f)))
 
 (define (drawmenu menu panel)
 
@@ -400,12 +408,12 @@ for this predicate, sort in the opposite direction."
   (keypad! jobs-pan #t)
 
   (move help-pan 0 4)
-  (addstr-formatted help-pan "<Q> Quit <Enter> View Script ")
-  (attr-set! help-pan A_BOLD)
-  (addch help-pan (acs-uarrow))
-  (addch help-pan (acs-darrow))
-  (attr-set! help-pan A_NORMAL)
-  (addstr-formatted help-pan " Scroll <S> SSH to job master host <F5> Refresh")
+  (addstr-formatted help-pan
+		    `(b "Q") " Quit "
+		    `(b "Enter") " View Script "
+		    `(b ,(acs-uarrow) ,(acs-darrow)) " Scroll "
+		    `(b "S") " SSH to job master host "
+		    `(b "F5") " Refresh")
 
   (let display-jobs ((jobs (get-joblist))
 		     (sort-p (compare job-effic)))
