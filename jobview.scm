@@ -42,18 +42,20 @@
 active jobs on stdout."
   (format #f "ssh login-~a.uantwerpen.be showq -r --xml" *target-cluster*))
 
-(define (read-stdout cmd)
-  "Run CMD as an external process, and capture stdout.  stderr is
-redirected to avoid conflicts with the curses interface."
+(define (process-output proc cmd)
+  "Runs CMD as an external process, with an input port from which the
+process' stdout may be read, and runs the procedure PROC that takes
+this input prot as a single argument.  Throws an exception 'cmd-failed
+if CMD's exit status is non-zero."
   (let ((err-port (current-error-port)))
-    (set-current-error-port (%make-void-port "w"))
+    (set-current-error-port (%make-void-port "w")) ; Temporarily redirect stderr.
     (let* ((port (open-input-pipe cmd))
-	   (stdout (get-string-all port))
+	   (result (proc port))
 	   (status (close-pipe port)))
       (set-current-error-port err-port)
       (or (zero? status)
 	  (throw 'cmd-failed cmd status))
-      stdout)))
+      result)))
 
 (define-record-type <node>
   (make-node procs mem)
@@ -63,9 +65,9 @@ redirected to avoid conflicts with the curses interface."
 
 (define *node-properties*
   (let* ((nodes ((sxpath '(// Data node))
-		 (xml->sxml (read-stdout
-			     (format #f "ssh login-~a.uantwerpen.be checknode ALL --xml"
-				     *target-cluster*)))))
+		 (process-output
+		  xml->sxml (format #f "ssh login-~a.uantwerpen.be checknode ALL --xml"
+				    *target-cluster*))))
 	 (table (make-hash-table (length nodes))))
     (for-each
      (lambda (the-node)
@@ -180,13 +182,13 @@ This is a bug.~%" x)
   (catch 'cmd-failed
     (lambda ()
       (map sxml->job ((sxpath '(// Data queue job))
-		     (xml->sxml (read-stdout (showq))))))
+		     (process-output xml->sxml (showq)))))
    (lambda (key cmd status)
      (error (format #f "ERROR: Could not obtain job list: command '~a' returned ~d.\n" cmd status)))))
 
 (define (get-jobscript jobid)
   (catch 'cmd-failed
-    (lambda () (read-stdout (cat-jobscript jobid )))
+    (lambda () (process-output get-string-all (cat-jobscript jobid )))
     (lambda (key cmd status)
       (format #f
 	      "ERROR: Could not get script for job ~a.
@@ -211,9 +213,9 @@ command '~a' returned ~d.\n"
 (define (submitted-command jobid)
   "Return the command used to submit job with JOBID, by retrieving IWD
 and SubmitArgs attributes from checkjob --xml -v."
-  (let* ((jobxml (xml->sxml (read-stdout
-			    (format #f "ssh login-~a.uantwerpen.be checkjob ~a --xml -v"
-				    *target-cluster* jobid))))
+  (let* ((jobxml (process-output xml->sxml
+				 (format #f "ssh login-~a.uantwerpen.be checkjob ~a --xml -v"
+					 *target-cluster* jobid)))
 	 ;; Query for the child nodes of  <Job> we are interested in:
 	 (query (sxpath `(// Data job))))
     (sxml-match (query jobxml)
