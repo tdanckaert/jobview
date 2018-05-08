@@ -6,6 +6,7 @@
 	     (ice-9 match)
 	     (ice-9 popen)
 	     (ice-9 rdelim)
+	     (ice-9 regex)
 	     (ice-9 textual-ports)
 	     (sxml simple)
 	     (sxml match)
@@ -92,10 +93,11 @@ list (hours minutes seconds)."
     (list (/ hours*3600 3600) (/ mins*60 60) secs)))
 
 (define-record-type <job>
-  (make-job user id name procs host effic tstart walltime)
+  (make-job user id array-size name procs host effic tstart walltime)
   job?
   (user job-user)
   (id job-id)
+  (array-size job-array-size)
   (name job-name)
   (procs job-procs)
   (host job-host)
@@ -125,19 +127,28 @@ using the accessor FIELD, e.g. (compare job-effic)."
 			     (JobID ,id)
 			     (JobName ,name)
 			     (ReqProcs ,procs)
-			     (MasterHost ,host)
-			     (StatPSUtl ,psutil)
+			     (MasterHost (,host "--")) ; TODO: MasterHost is sometimes missing (for jobs that ended up on the wrong node?)
+			     (StatPSUtl (,psutil "0"))
 			     (StartTime ,tstart)
 			     (AWDuration (,used-walltime "0")) ; "AWDuration" is missing for jobs that have just started
 			     (ReqAWDuration ,walltime)
 			     . ,rest ))
-		     (let ((id (string->number id))
-			   (procs (string->number procs))
-			   (psutil (string->number psutil))
-			   (tstart (string->number tstart))
-			   (walltime (string->number walltime))
-			   (used-walltime (string->number used-walltime)))
-		       (make-job user id name procs host
+		     (let* (;; Match ID for array jobs "x(y)", for an
+			    ;; array with id x[] and y sub-jobs), or
+			    ;; simply "x" for a regular job:
+			    (match-id (string-match "([0-9]+)(\\(([0-9]+)\\))?" id))
+			    (job-id (if (match:substring match-id 3) ; if this match exists, it's an array job
+					(string-append (match:substring match-id 1) "[]")
+					(match:substring match-id 1)))
+			    (array-size (if (match:substring match-id 3)
+					    (string->number (match:substring match-id 3))
+					    0))
+			    (procs (string->number procs))
+			    (psutil (string->number psutil))
+			    (tstart (string->number tstart))
+			    (walltime (string->number walltime))
+			    (used-walltime (string->number used-walltime)))
+		       (make-job user job-id array-size name procs host
 				 ;; To calculate efficiency, we could use
 				 ;; the XML entry "StatsPSDed", demanded
 				 ;; processor time, but this entry is
@@ -198,16 +209,15 @@ command '~a' returned ~d.\n"
   (addch win (acs-lrcorner)))
 
 (define (submitted-command jobid)
-  "Return the command used to submit job with JOBID, by retrieving
-<init_work_dir> and <submit_args> from qstat -fx."
+  "Return the command used to submit job with JOBID, by retrieving IWD
+and SubmitArgs attributes from checkjob --xml -v."
   (let* ((jobxml (xml->sxml (read-stdout
-			    (format #f "ssh login-~a.uantwerpen.be qstat -fx ~a"
+			    (format #f "ssh login-~a.uantwerpen.be checkjob ~a --xml -v"
 				    *target-cluster* jobid))))
 	 ;; Query for the child nodes of  <Job> we are interested in:
-	 (query (sxpath `(// Data Job ,(node-or (sxpath '(init_work_dir))
-						(sxpath '(submit_args)))))))
+	 (query (sxpath `(// Data job))))
     (sxml-match (query jobxml)
-		[(list (init_work_dir ,dir) (submit_args ,args))
+		[(list (job (@ (IWD ,dir) (SubmitArgs ,args) . ,attrs) . ,jobrest))
 		 ;; "workdir/args" should give us the file name of the submitted jobscript, possibly with some extra arguments
 		 (string-append dir "$ qsub " args)])))
 
@@ -286,13 +296,14 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 
 ;; Column width, label, and formatting for the job menu:
 (define *menu-table*
-  `((5 "Id" "~a")
+  `((7 "Id" "~a")
     (8 "User" "~a")
     (20 "Name" "~20@y")
     (5 "Procs" "~5a")
     (7 "Effic" "~6,2f ") ; floating point efficiency, e.g. ' 99.05'
     (9 "Remain" "~{~2,'0d~^:~} ") ; remaining time in hh:mm:ss format
-    (26 "Time started" "~a")))
+    (19 "Time started" "~a")
+    (5 "Arr-len" "~a")))
 
 (define (write-menu-title win)
   (let ((y-start (getcury win)))
@@ -371,7 +382,7 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 
 (define (job->menu-item job tnow)
   (new-item
-   (number->string (job-id job))
+   (format #f "~7a" (job-id job))
    (format-table-row (cdr *menu-table*) ; first column 'id' is the menu item name
 		     (job-user job)
 		     (job-name job)
@@ -381,7 +392,9 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 		     (hour-min-sec (- (+ (job-tstart job)
 					 (job-walltime job))
 				      tnow))
-		     (strftime "%c" (localtime (job-tstart job))))))
+		     (strftime "%a %b %02d %T" (localtime (job-tstart job)))
+		     (if (> (job-array-size job) 0 )
+			 (job-array-size job) ""))))
 
 (define (sort-up-down list less)
   "Sort LIST according to predicate LESS.  If LIST is already sorted
@@ -420,6 +433,8 @@ for this predicate, sort in the opposite direction."
     (let* ((jobs (sort-up-down jobs sort-p))
 	   (jobs-menu (new-menu (map (cut job->menu-item <> (current-time))
 				     jobs)))
+	   (selected-job
+	    (lambda () (list-ref jobs (item-index (current-item jobs-menu)))))
 	   (update-jobs (lambda (joblist sort-p)
 			  ;; We must unpost the old menu before it gets garbage collected.
 			  (unpost-menu jobs-menu)
@@ -482,13 +497,16 @@ for this predicate, sort in the opposite direction."
 	 ((eqv? c #\t)
 	  (update-jobs jobs (compare job-tstart)))
 
+	 ((eqv? c #\a)
+	  (update-jobs jobs (compare job-array-size)))
+
 	 ;; Refresh job list.
 	 ((eqv? c (key-f 5))
 	  (update-jobs (get-joblist) sort-p))
 
 	 ;; Open SSH session on the master node.
 	 ((eqv? c #\s)
-	  (ssh (list-ref jobs (item-index (current-item jobs-menu))))
+	  (ssh (selected-job))
 	  (loop (getch jobs-pan)))
 
 	 ;; Terminal resize events are passed as 'KEY_RESIZE'.
@@ -501,7 +519,7 @@ for this predicate, sort in the opposite direction."
 	      (eqv? c KEY_ENTER)
 	      (eqv? c #\cr)
 	      (eqv? c #\nl))
-	  (show-jobscript (item-name (current-item jobs-menu)))
+	  (show-jobscript (job-id (selected-job)))
 	  (loop (getch jobs-pan)))
 
 	 ;; If 'Q' or 'q'  is pressed, quit.  Otherwise, loop.
