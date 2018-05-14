@@ -37,7 +37,7 @@
 	  jobid
 	  *target-cluster*))
 
-(define (alljobs)
+(define (checkjob-all)
   "An external command which prints an XML-formatted list of all jobs
 to stdout."
   (format #f "ssh login-~a.uantwerpen.be checkjob -v --xml ALL" *target-cluster*))
@@ -95,11 +95,11 @@ list (hours minutes seconds)."
     (list (/ hours*3600 3600) (/ mins*60 60) secs)))
 
 (define-record-type <job>
-  (make-job user id array-size name procs nodes effic tstart walltime)
+  (make-job user id array-id name procs nodes effic tstart walltime)
   job?
   (user job-user)
   (id job-id)
-  (array-size job-array-size)
+  (array-id job-array-id)
   (name job-name)
   (procs job-procs)
   (nodes job-nodes)
@@ -117,9 +117,16 @@ using the accessor FIELD, e.g. (compare job-effic)."
   (lambda (job1 job2)
     (let ((f1 (field job1))
 	  (f2 (field job2)))
-      (if (number? f1)
-	  (< f1 f2)
-	  (string<? f1 f2)))))
+      ;; Take into account nil values when sorting (e.g. array-id can be #f)
+      (cond
+       ((nil? f1)
+	(not (nil? f2))) ; f1 is nil: if f2 is not nil, f1 < f2
+       ((nil? f2)
+	#f) ; f2 is nil, f1 is not nil -> f1 >= f2
+       ((number? f1)
+	(< f1 f2))
+       (else
+	(string<? f1 f2))))))
 
 (define (sxml->job x)
   "Create a job record from checkjob's xml output."
@@ -137,16 +144,15 @@ using the accessor FIELD, e.g. (compare job-effic)."
 				  (TCReqMin ,min-tasks)
 				  (ReqProcPerTask ,proc-per-task)
 				  . ,req-attrs)))
-		     (let* (;; Match ID for array jobs "x(y)", for an
-			    ;; array with id x[] and y sub-jobs), or
+		     (let* (;; Match ID for array sub-jobs "x[y]", or
 			    ;; simply "x" for a regular job:
-			    (match-id (string-match "([0-9]+)(\\(([0-9]+)\\))?" id))
+			    (match-id (string-match "([0-9]+)(\\[([0-9]+)\\])?" id))
 			    (job-id (if (match:substring match-id 3) ; if this match exists, it's an array job
 					(string-append (match:substring match-id 1) "[]")
 					(match:substring match-id 1)))
-			    (array-size (if (match:substring match-id 3)
+			    (array-id (if (match:substring match-id 3)
 					    (string->number (match:substring match-id 3))
-					    0))
+					    #f))
 			    (tasks (string->number (string-trim-right min-tasks #\*)))
 			    (procs (* tasks (string->number proc-per-task)))
 			    (psutil (string->number psutil))
@@ -163,7 +169,7 @@ using the accessor FIELD, e.g. (compare job-effic)."
 						    s)))
 					    (string-split alloc-nodes #\,)))
 			    (host (car nodes)))
-		       (make-job user job-id array-size name procs nodes
+		       (make-job user job-id array-id name procs nodes
 				 ;; To calculate efficiency, we could use
 				 ;; the XML entry "StatsPSDed", demanded
 				 ;; processor time, but this entry is
@@ -191,19 +197,44 @@ using the accessor FIELD, e.g. (compare job-effic)."
 This is a bug.~%" x)
       (throw key parameters))))
 
+(define (read-xml port)
+  "Parse a series of xml documents from PORT into sxml, and return the
+results as a list."
+  (let ((result '()))
+    (while (not (eof-object? (peek-char port)))
+      (set! result (cons (xml->sxml port) result))
+      (read-line port))
+    result))
+
 (define (get-joblist)
-  (define (running? job)
-    (sxml-match job [(job (@ (State ,state) . ,attrs)
-			  . ,jobdata)
-		     (equal? state "Running")]))
+  (define (running? job-or-child)
+    ;; TODO: Can this be stated more briefly?
+    (equal? (sxml-match job-or-child
+			[(job (@ (State ,state) . ,attrs) . ,jobdata)
+			 state]
+			[(child (@ (State ,state) . ,attrs) . ,childdata)
+			 state]) "Running"))
+  (define filter (@ (guile) filter)) ; Name clash with "filter" from (sxml xpath).
   (catch 'cmd-failed
     (lambda ()
-      (map sxml->job
-	   ;; Use module prefix because (filter) clashes with (filter)
-	   ;; from the (sxml xpath) module:
-	   ((@ (guile) filter) running?
-	    ((sxpath '(// Data job))
-	     (process-output xml->sxml (alljobs))))))
+      (let* ((jobs (process-output xml->sxml (checkjob-all)))
+	     ;; "checkjob ALL" does not show array children, therefore
+	     ;; we request info about all array children as well.  We
+	     ;; only want to check running child jobs, otherwise the
+	     ;; number of entries could be huge:
+	     (array-children (filter running?
+				     ((sxpath '(// Data job ArrayInfo child)) jobs)))
+	     (child-jobids (sxml-match array-children
+				       [(list (child (@ (Name ,jobid) . ,rest)) ...) jobid]))
+	     (child-jobs (if (not (nil? child-jobids))
+			     (process-output read-xml
+					     ;; For efficiency, we chain all "checkjob <child-id>" commands and wrap them in one ssh command:
+					     (format #f "ssh login-~a.uantwerpen.be \"~{checkjob -v --xml ~a~^; ~}\""
+						     *target-cluster* child-jobids))
+			     '())))
+	(map sxml->job
+	     (filter running?
+		     ((sxpath '(// Data job)) (list jobs child-jobs))))))
     (lambda (key cmd status)
       (error (format #f "ERROR: Could not obtain job list: command '~a' returned ~d.\n" cmd status)))))
 
@@ -326,7 +357,7 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
     (7 "Effic" "~6,2f ") ; floating point efficiency, e.g. ' 99.05'
     (9 "Remain" "~{~2,'0d~^:~} ") ; remaining time in hh:mm:ss format
     (19 "Time started" "~a")
-    (5 "Arr-len" "~a")))
+    (5 "ArrayId" "~a")))
 
 (define (write-menu-title win)
   (let ((y-start (getcury win)))
@@ -416,8 +447,8 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 					 (job-walltime job))
 				      tnow))
 		     (strftime "%a %b %02d %T" (localtime (job-tstart job)))
-		     (if (> (job-array-size job) 0 )
-			 (job-array-size job) ""))))
+		     (if (job-array-id job)
+			 (job-array-id job) ""))))
 
 (define (sort-up-down list less)
   "Sort LIST according to predicate LESS.  If LIST is already sorted
@@ -521,7 +552,7 @@ for this predicate, sort in the opposite direction."
 	  (update-jobs jobs (compare job-tstart)))
 
 	 ((eqv? c #\a)
-	  (update-jobs jobs (compare job-array-size)))
+	  (update-jobs jobs (compare job-array-id)))
 
 	 ;; Refresh job list.
 	 ((eqv? c (key-f 5))
