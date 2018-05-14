@@ -37,10 +37,10 @@
 	  jobid
 	  *target-cluster*))
 
-(define (showq)
-  "An external command which prints an XML-formatted list of all
-active jobs on stdout."
-  (format #f "ssh login-~a.uantwerpen.be showq -r --xml" *target-cluster*))
+(define (alljobs)
+  "An external command which prints an XML-formatted list of all jobs
+to stdout."
+  (format #f "ssh login-~a.uantwerpen.be checkjob -v --xml ALL" *target-cluster*))
 
 (define (process-output proc cmd)
   "Runs CMD as an external process, with an input port from which the
@@ -95,14 +95,14 @@ list (hours minutes seconds)."
     (list (/ hours*3600 3600) (/ mins*60 60) secs)))
 
 (define-record-type <job>
-  (make-job user id array-size name procs host effic tstart walltime)
+  (make-job user id array-size name procs nodes effic tstart walltime)
   job?
   (user job-user)
   (id job-id)
   (array-size job-array-size)
   (name job-name)
   (procs job-procs)
-  (host job-host)
+  (nodes job-nodes)
   (effic job-effic)
   (tstart job-tstart)
   (walltime job-walltime))
@@ -122,19 +122,21 @@ using the accessor FIELD, e.g. (compare job-effic)."
 	  (string<? f1 f2)))))
 
 (define (sxml->job x)
-  "Create a job record from showq's xml output."
+  "Create a job record from checkjob's xml output."
   (catch #t
     (lambda ()
       (sxml-match x [(job (@ (User ,user)
 			     (JobID ,id)
 			     (JobName ,name)
-			     (ReqProcs ,procs)
-			     (MasterHost (,host "--")) ; TODO: MasterHost is sometimes missing (for jobs that ended up on the wrong node?)
 			     (StatPSUtl (,psutil "0"))
 			     (StartTime ,tstart)
 			     (AWDuration (,used-walltime "0")) ; "AWDuration" is missing for jobs that have just started
 			     (ReqAWDuration ,walltime)
-			     . ,rest ))
+			     . ,job-attrs )
+			  (req (@ (AllocNodeList ,alloc-nodes)
+				  (TCReqMin ,min-tasks)
+				  (ReqProcPerTask ,proc-per-task)
+				  . ,req-attrs)))
 		     (let* (;; Match ID for array jobs "x(y)", for an
 			    ;; array with id x[] and y sub-jobs), or
 			    ;; simply "x" for a regular job:
@@ -145,12 +147,23 @@ using the accessor FIELD, e.g. (compare job-effic)."
 			    (array-size (if (match:substring match-id 3)
 					    (string->number (match:substring match-id 3))
 					    0))
-			    (procs (string->number procs))
+			    (tasks (string->number (string-trim-right min-tasks #\*)))
+			    (procs (* tasks (string->number proc-per-task)))
 			    (psutil (string->number psutil))
 			    (tstart (string->number tstart))
 			    (walltime (string->number walltime))
-			    (used-walltime (string->number used-walltime)))
-		       (make-job user job-id array-size name procs host
+			    (used-walltime (string->number used-walltime))
+			    ;; AllocNodeList is a comma-separated list
+			    ;; of nodes, each node optionally followed
+			    ;; by the number of procs ":nprocs"
+			    (nodes (map (lambda (s)
+					      (let ((index (string-index s #\:)))
+						(if index
+						    (substring s 0 index)
+						    s)))
+					    (string-split alloc-nodes #\,)))
+			    (host (car nodes)))
+		       (make-job user job-id array-size name procs nodes
 				 ;; To calculate efficiency, we could use
 				 ;; the XML entry "StatsPSDed", demanded
 				 ;; processor time, but this entry is
@@ -179,12 +192,20 @@ This is a bug.~%" x)
       (throw key parameters))))
 
 (define (get-joblist)
+  (define (running? job)
+    (sxml-match job [(job (@ (State ,state) . ,attrs)
+			  . ,jobdata)
+		     (equal? state "Running")]))
   (catch 'cmd-failed
     (lambda ()
-      (map sxml->job ((sxpath '(// Data queue job))
-		     (process-output xml->sxml (showq)))))
-   (lambda (key cmd status)
-     (error (format #f "ERROR: Could not obtain job list: command '~a' returned ~d.\n" cmd status)))))
+      (map sxml->job
+	   ;; Use module prefix because (filter) clashes with (filter)
+	   ;; from the (sxml xpath) module:
+	   ((@ (guile) filter) running?
+	    ((sxpath '(// Data job))
+	     (process-output xml->sxml (alljobs))))))
+    (lambda (key cmd status)
+      (error (format #f "ERROR: Could not obtain job list: command '~a' returned ~d.\n" cmd status)))))
 
 (define (get-jobscript jobid)
   (catch 'cmd-failed
@@ -293,7 +314,7 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 (define (ssh job)
   (endwin)
   (system (format #f "ssh -tt login-hopper.uantwerpen.be ssh ~a"
-		  (job-host job)))
+		  (car (job-nodes job))))
   (doupdate))
 
 ;; Column width, label, and formatting for the job menu:
