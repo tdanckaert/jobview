@@ -147,9 +147,7 @@ using the accessor FIELD, e.g. (compare job-effic)."
 		     (let* (;; Match ID for array sub-jobs "x[y]", or
 			    ;; simply "x" for a regular job:
 			    (match-id (string-match "([0-9]+)(\\[([0-9]+)\\])?" id))
-			    (job-id (if (match:substring match-id 3) ; if this match exists, it's an array job
-					(string-append (match:substring match-id 1) "[]")
-					(match:substring match-id 1)))
+			    (job-id (match:substring match-id 1))
 			    (array-id (if (match:substring match-id 3)
 					    (string->number (match:substring match-id 3))
 					    #f))
@@ -436,7 +434,7 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 
 (define (job->menu-item job tnow)
   (new-item
-   (format #f "~7a" (job-id job))
+   (format #f "~5a~a" (job-id job) (if (job-array-id job) "[]" "  "))
    (format-table-row (cdr *menu-table*) ; first column 'id' is the menu item name
 		     (job-user job)
 		     (job-name job)
