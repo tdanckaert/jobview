@@ -149,8 +149,8 @@ using the accessor FIELD, e.g. (compare job-effic)."
 			    (match-id (string-match "([0-9]+)(\\[([0-9]+)\\])?" id))
 			    (job-id (match:substring match-id 1))
 			    (array-id (if (match:substring match-id 3)
-					    (string->number (match:substring match-id 3))
-					    #f))
+					  (string->number (match:substring match-id 3))
+					  #f))
 			    (tasks (string->number (string-trim-right min-tasks #\*)))
 			    (procs (* tasks (string->number proc-per-task)))
 			    (psutil (string->number psutil))
@@ -161,10 +161,10 @@ using the accessor FIELD, e.g. (compare job-effic)."
 			    ;; of nodes, each node optionally followed
 			    ;; by the number of procs ":nprocs"
 			    (nodes (map (lambda (s)
-					      (let ((index (string-index s #\:)))
-						(if index
-						    (substring s 0 index)
-						    s)))
+					  (let ((index (string-index s #\:)))
+					    (if index
+						(substring s 0 index)
+						s)))
 					    (string-split alloc-nodes #\,)))
 			    (host (car nodes)))
 		       (make-job user job-id array-id name procs nodes
