@@ -95,11 +95,20 @@ if CMD's exit status is non-zero."
      nodes)
     table))
 
-(define (number-of-lines string)
-  "Returns 1 + (number of newlines in STRING)."
-  (string-fold (lambda (char count)
-		 (if (eq? char #\newline) (1+ count) count))
-	       1 string))
+(define (number-of-lines string ncols)
+  "Returns number of lines required to display STRING, when wrapping
+long lines at column NCOLS, as well as at newline characters."
+  (let iter ((curr-line 1)
+	     (curr-col 1)
+	     (curr-idx 0))
+    (if (>= curr-idx (string-length string))
+	curr-line
+	(let ((char (string-ref string curr-idx)))
+	  (cond
+	   ((or (eq? char #\newline) (= curr-col ncols))
+	    (iter (1+ curr-line) 0 (1+ curr-idx)))
+	   (else
+	    (iter curr-line (1+ curr-col) (1+ curr-idx))))))))
 
 (define (hour-min-sec duration)
   "Convert a duration, given as a number of seconds, into a
@@ -261,16 +270,11 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
     (show-panel panel)
 
     (let show-script ((script (get-jobscript job)))
-      (let* ((nlines (number-of-lines script))
-	     (pan-height (getmaxy panel))
+      (let* ((pan-height (getmaxy panel))
 	     (pan-width (getmaxx panel))
-
-	     ;; TODO: check max #cols of script, and set ncols
-	     ;; accordingly, or take into account the wrapping of long
-	     ;; lines of the script on multiple lines of the pad
-	     ;; (effectively increasing nlines).
 	     (nrows (- pan-height 4))
 	     (ncols (- pan-width 2))
+	     (nlines (number-of-lines script ncols))
 	     (pad (newpad nlines ncols)))
 
 	(addstr panel (string-append (job-workdir job) "$ qsub "
