@@ -155,12 +155,6 @@ using the accessor FIELD, e.g. (compare job-effic)."
 			    (array-id (if (match:substring match-id 3)
 					  (string->number (match:substring match-id 3))
 					  #f))
-			    (tasks (string->number (string-trim-right min-tasks #\*)))
-			    (procs (* tasks (string->number proc-per-task)))
-			    (psutil (string->number psutil))
-			    (tstart (string->number tstart))
-			    (walltime (string->number walltime))
-			    (used-walltime (string->number used-walltime))
 			    ;; AllocNodeList is a comma-separated list
 			    ;; of nodes, each node optionally followed
 			    ;; by the number of procs ":nprocs"
@@ -170,7 +164,15 @@ using the accessor FIELD, e.g. (compare job-effic)."
 						(substring s 0 index)
 						s)))
 					    (string-split alloc-nodes #\,)))
-			    (host (car nodes)))
+			    (host (car nodes))
+			    (tasks (string->number (string-trim-right min-tasks #\*)))
+			    (procs (* tasks (if (equal? proc-per-task "-1") ; "-1" means "all"
+						(node-procs (hash-ref *node-properties* host))
+						(string->number proc-per-task))))
+			    (psutil (string->number psutil))
+			    (tstart (string->number tstart))
+			    (walltime (string->number walltime))
+			    (used-walltime (string->number used-walltime)))
 		       (make-job user job-id array-id name procs nodes dir args
 				 ;; To calculate efficiency, we could use
 				 ;; the XML entry "StatsPSDed", demanded
@@ -178,20 +180,7 @@ using the accessor FIELD, e.g. (compare job-effic)."
 				 ;; missing if resources were requested as
 				 ;; follows: "tasks=<x>:lprocs=all".
 				 (* 100 (/ psutil
-					   ;; if ReqProcs is negative, this seems to mean
-					   ;; the resource request was
-					   ;;
-					   ;; "tasks=-(ReqProcs):lprocs=all",
-					   ;;
-					   ;; so the actual number of requested procs is
-					   ;;
-					   ;; -1 * ReqProcs * (number of cores per node)
-					   (* (if (> procs 0)
-						  procs
-						  (* -1 procs
-						     (node-procs (hash-ref *node-properties* host))))
-					      ;; If used-walltime is 0, round up to 1 second to avoid division by 0:
-					      (max used-walltime 1))))
+					   (* procs (max used-walltime 1)))) ; If used-walltime is 0, round up to 1 second to avoid division by 0:
 				 tstart walltime))]))
     (lambda (key . parameters)
       (endwin)
