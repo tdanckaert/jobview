@@ -15,6 +15,21 @@
 	     (ncurses menu)
 	     (ncurses panel))
 
+(define-record-type <job>
+  (make-job user id array-id name procs nodes workdir args effic tstart walltime)
+  job?
+  (user job-user)
+  (id job-id)
+  (array-id job-array-id)
+  (name job-name)
+  (procs job-procs)
+  (nodes job-nodes)
+  (workdir job-workdir)
+  (args job-args)
+  (effic job-effic)
+  (tstart job-tstart)
+  (walltime job-walltime))
+
 ;; The cluster on which we are running, or #f if none:
 (define *host-cluster*
   (getenv "VSC_INSTITUTE_CLUSTER"))
@@ -30,11 +45,11 @@
 (or *target-cluster*
     (error "Please specify the cluster name."))
 
-(define (cat-jobscript jobid)
+(define (cat-jobscript job)
   "An external command which outputs the jobscript for JOBID on stdout."
   (format #f "ssh master-~a.uantwerpen.be sudo /bin/cat /var/spool/torque/server_priv/jobs/~a.~a.SC"
 	  *target-cluster*
-	  jobid
+	  (job-id job)
 	  *target-cluster*))
 
 (define (checkjob-all)
@@ -94,19 +109,6 @@ list (hours minutes seconds)."
 	 (hours*3600 (- duration mins*60 secs)))
     (list (/ hours*3600 3600) (/ mins*60 60) secs)))
 
-(define-record-type <job>
-  (make-job user id array-id name procs nodes effic tstart walltime)
-  job?
-  (user job-user)
-  (id job-id)
-  (array-id job-array-id)
-  (name job-name)
-  (procs job-procs)
-  (nodes job-nodes)
-  (effic job-effic)
-  (tstart job-tstart)
-  (walltime job-walltime))
-
 (define (time-end job)
   "The time when a job must be done, based on its start time and requested walltime."
   (+ (job-tstart job) (job-walltime job)))
@@ -139,6 +141,8 @@ using the accessor FIELD, e.g. (compare job-effic)."
 			     (StartTime ,tstart)
 			     (AWDuration (,used-walltime "0")) ; "AWDuration" is missing for jobs that have just started
 			     (ReqAWDuration ,walltime)
+			     (IWD ,dir)
+			     (SubmitArgs ,args)
 			     . ,job-attrs )
 			  (req (@ (AllocNodeList ,alloc-nodes)
 				  (TCReqMin ,min-tasks)
@@ -167,7 +171,7 @@ using the accessor FIELD, e.g. (compare job-effic)."
 						s)))
 					    (string-split alloc-nodes #\,)))
 			    (host (car nodes)))
-		       (make-job user job-id array-id name procs nodes
+		       (make-job user job-id array-id name procs nodes dir args
 				 ;; To calculate efficiency, we could use
 				 ;; the XML entry "StatsPSDed", demanded
 				 ;; processor time, but this entry is
@@ -236,14 +240,14 @@ results as a list."
     (lambda (key cmd status)
       (error (format #f "ERROR: Could not obtain job list: command '~a' returned ~d.\n" cmd status)))))
 
-(define (get-jobscript jobid)
+(define (get-jobscript job)
   (catch 'cmd-failed
-    (lambda () (process-output get-string-all (cat-jobscript jobid )))
+    (lambda () (process-output get-string-all (cat-jobscript job)))
     (lambda (key cmd status)
       (format #f
 	      "ERROR: Could not get script for job ~a.
 command '~a' returned ~d.\n"
-	      jobid cmd status))))
+	      (job-id job) cmd status))))
 
 (define (draw-box win y x ny nx)
   "Draw a box of dimensions NY * NX, with upper left coordinates Y and X."
@@ -260,85 +264,72 @@ command '~a' returned ~d.\n"
   (move win (+ y (1- ny)) (+ x (1- nx)))
   (addch win (acs-lrcorner)))
 
-(define (submitted-command jobid)
-  "Return the command used to submit job with JOBID, by retrieving IWD
-and SubmitArgs attributes from checkjob --xml -v."
-  (let* ((jobxml (process-output xml->sxml
-				 (format #f "ssh login-~a.uantwerpen.be checkjob ~a --xml -v"
-					 *target-cluster* jobid)))
-	 ;; Query for the child nodes of  <Job> we are interested in:
-	 (query (sxpath `(// Data job))))
-    (sxml-match (query jobxml)
-		[(list (job (@ (IWD ,dir) (SubmitArgs ,args) . ,attrs) . ,jobrest))
-		 ;; "workdir/args" should give us the file name of the submitted jobscript, possibly with some extra arguments
-		 (string-append dir "$ qsub " args)])))
-
 (define (jobscript-viewer panel %resize)
   "Return a procedure that, given a JOBID, displays that jobscript in
 PANEL.  Procedure %RESIZE will be called when the terminal is resized."
-  (lambda (jobid)
+  (lambda (job)
     (erase panel)
     (show-panel panel)
 
-    (let ((submission (submitted-command jobid)))
-      (let show-script ((script (get-jobscript jobid)))
-	(let* ((nlines (number-of-lines script))
-	       (pan-height (getmaxy panel))
-	       (pan-width (getmaxx panel))
+    (let show-script ((script (get-jobscript job)))
+      (let* ((nlines (number-of-lines script))
+	     (pan-height (getmaxy panel))
+	     (pan-width (getmaxx panel))
 
-	       ;; TODO: check max #cols of script, and set ncols
-	       ;; accordingly, or take into account the wrapping of long
-	       ;; lines of the script on multiple lines of the pad
-	       ;; (effectively increasing nlines).
-	       (nrows (- pan-height 4))
-	       (ncols (- pan-width 2))
-	       (pad (newpad nlines ncols)))
+	     ;; TODO: check max #cols of script, and set ncols
+	     ;; accordingly, or take into account the wrapping of long
+	     ;; lines of the script on multiple lines of the pad
+	     ;; (effectively increasing nlines).
+	     (nrows (- pan-height 4))
+	     (ncols (- pan-width 2))
+	     (pad (newpad nlines ncols)))
 
-	  (addstr panel submission)
-	  (draw-box panel 1 0 (- pan-height 2) pan-width)
-	  (move panel (1- pan-height) 1)
-	  (addstr-formatted panel
-			    `(b "Q Enter Space") " Go back")
-	  (addstr pad script)
+	(addstr panel (string-append (job-workdir job) "$ qsub "
+				     (job-args job)))
+	(draw-box panel 1 0 (- pan-height 2) pan-width)
+	(move panel (1- pan-height) 1)
+	(addstr-formatted panel
+			  `(b "Q Enter Space") " Go back")
+	(addstr pad script)
 
-	  (update-panels)
-	  (doupdate)
+	(update-panels)
+	(doupdate)
 
-	  ;; Read input, and scroll the script inside the window if up/down is pressed.
-	  (let refresh-pad ((current-line 0))
-	    (prefresh pad current-line 0
-		      (+ 2 (getbegy panel)) (+ 1 (getbegx panel))
-		      (+ 1 (getbegy panel) nrows) (+ (getbegx panel) ncols))
-	    (let process-input ((c (getch panel)))
-	      (cond
+	;; Read input, and scroll the script inside the window if up/down is pressed.
+	(let refresh-pad ((current-line 0))
+	  (prefresh pad current-line 0
+		    (+ 2 (getbegy panel)) (+ 1 (getbegx panel))
+		    (+ 1 (getbegy panel) nrows) (+ (getbegx panel) ncols))
+	  (let process-input ((c (getch panel)))
+	    (cond
 
-	       ((and (eqv? c KEY_DOWN)
-		     (> nlines (+ current-line nrows)))
-		(refresh-pad (1+ current-line)))
+	     ((and (eqv? c KEY_DOWN)
+		   (> nlines (+ current-line nrows)))
+	      (refresh-pad (1+ current-line)))
 
-	       ((and (eqv? c KEY_UP) (> current-line 0))
-		(refresh-pad (1- current-line)))
+	     ((and (eqv? c KEY_UP) (> current-line 0))
+	      (refresh-pad (1- current-line)))
 
-	       ((eqv? c KEY_RESIZE)
-		(%resize)
-		;; resize function will reset the whole display, so run
-		;; show-script again.
-		(show-script script))
+	     ((eqv? c KEY_RESIZE)
+	      (%resize)
+	      ;; resize function will reset the whole display, so run
+	      ;; show-script again.
+	      (show-script script))
 
-	       ;; Return if we get enter/space/q, otherwise read a new input character.
-	       ((not (or (eqv? c #\sp)
-			 (eqv? c KEY_ENTER)
-			 (eqv? c #\cr)
-			 (eqv? c #\nl)
-			 (eqv? c #\q)
-			 (eqv? c #\Q)))
-		(process-input (getch panel))))))
+	     ;; Return if we get enter/space/q, otherwise read a new input character.
+	     ((not (or (eqv? c #\sp)
+		       (eqv? c KEY_ENTER)
+		       (eqv? c #\cr)
+		       (eqv? c #\nl)
+		       (eqv? c #\q)
+		       (eqv? c #\Q)))
+	      (process-input (getch panel))))))
 
-	  ;; Clean up and return.
-	  (delwin pad)
-	  (hide-panel panel)
-	  (update-panels)
-	  (doupdate))))))
+	;; Clean up and return.
+	(delwin pad)
+	(hide-panel panel)
+	(update-panels)
+	(doupdate)))))
 
 (define (ssh job)
   (endwin)
@@ -571,7 +562,7 @@ for this predicate, sort in the opposite direction."
 	      (eqv? c KEY_ENTER)
 	      (eqv? c #\cr)
 	      (eqv? c #\nl))
-	  (show-jobscript (job-id (selected-job)))
+	  (show-jobscript (selected-job))
 	  (loop (getch jobs-pan)))
 
 	 ;; If 'Q' or 'q'  is pressed, quit.  Otherwise, loop.
