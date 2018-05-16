@@ -151,7 +151,7 @@ using the accessor FIELD, e.g. (compare job-effic)."
 			     (AWDuration (,used-walltime "0")) ; "AWDuration" is missing for jobs that have just started
 			     (ReqAWDuration ,walltime)
 			     (IWD ,dir)
-			     (SubmitArgs ,args)
+			     (SubmitArgs (,args #f))
 			     . ,job-attrs )
 			  (req (@ (AllocNodeList ,alloc-nodes)
 				  (TCReqMin ,min-tasks)
@@ -277,8 +277,9 @@ PANEL.  Procedure %RESIZE will be called when the terminal is resized."
 	     (nlines (number-of-lines script ncols))
 	     (pad (newpad nlines ncols)))
 
-	(addstr panel (string-append (job-workdir job) "$ qsub "
-				     (job-args job)))
+	(addstr-formatted panel `(b ,(job-workdir job)))
+	(and (job-args job) ; job-args is sometimes missing (jobs submitted with msub)
+	     (addstr panel (string-append " $ qsub " (job-args job))))
 	(draw-box panel 1 0 (- pan-height 2) pan-width)
 	(move panel (1- pan-height) 1)
 	(addstr-formatted panel
