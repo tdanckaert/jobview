@@ -262,68 +262,95 @@ command '~a' returned ~d.\n"
   (move win (+ y (1- ny)) (+ x (1- nx)))
   (addch win (acs-lrcorner)))
 
-(define (jobscript-viewer panel %resize)
-  "Return a procedure that, given a JOBID, displays that jobscript in
-PANEL.  Procedure %RESIZE will be called when the terminal is resized."
+(define (job-node-loads job)
+  "Get the load for each node allocated to JOB, as reported by 'mdiag
+-n' or 'checknode'."
+  (let* ((mdiag (format #f "ssh login-~a.uantwerpen.be \"~{mdiag -n --xml ~a~^; ~}\""
+			*target-cluster* (job-nodes job)))
+	 (node-xml (process-output read-xml mdiag)))
+    (sxml-match node-xml
+		[(list (*TOP* (Data (node (@ (LOAD ,loads) . ,attrs)))) ...)
+		 (map string->number loads)])))
+
+(define (job-viewer panel %resize)
+  "Return a procedure that, given a job, displays details about that
+job in PANEL.  Procedure %RESIZE will be called when the terminal is
+resized."
   (lambda (job)
-    (erase panel)
-    (show-panel panel)
+    (let ((script (get-jobscript job))
+	  ;; Zip load with node name, and sort the pairs by increasing load:
+	  (loads (sort (zip (job-nodes job) (job-node-loads job))
+		       (lambda (x y) (< (cadr x) (cadr y))))))
+      (show-panel panel)
+      (let show-script ()
+	(let* ((pan-height (getmaxy panel))
+	       (pan-width (getmaxx panel))
+	       (nrows (- pan-height 6))
+	       (ncols (- pan-width 2))
+	       (nlines (number-of-lines script ncols))
+	       (pad (newpad nlines ncols)))
+	  (erase panel)
+	  (addstr-formatted panel `(b ,(job-workdir job)))
+	  (and (job-args job) ; job-args is sometimes missing (jobs submitted with msub)
+	       (addstr panel (string-append " $ qsub " (job-args job))))
+	  (draw-box panel 1 0 3 pan-width)
+	  (move panel 1 1)
+	  (addstr panel "Load:")
+	  (move panel 2 1)
+	  (let ((min-load (first loads))
+		(max-load (last loads))
+		(median-load (list-ref loads (quotient (length loads) 2))))
+	    (addstr-formatted panel '(b "min: ") (format #f "~5,2f (~a) " (cadr min-load) (car min-load))
+			      '(b "mdn: ") (format #f "~5,2f (~a) " (cadr median-load) (car median-load))
+			      '(b "max: ") (format #f "~5,2f (~a) " (cadr max-load) (car max-load))))
+	  (draw-box panel 3 0 (- pan-height 4) pan-width)
+	  (move panel 3 0)
+	  (addch panel (acs-ltee))
+	  (addstr panel "Script:")
+	  (move panel 3 (1- pan-width))
+	  (addch panel (acs-rtee))
+	  (move panel (1- pan-height) 1)
+	  (addstr-formatted panel
+			    `(b "Q Enter Space") " Go back")
+	  (addstr pad script)
 
-    (let show-script ((script (get-jobscript job)))
-      (let* ((pan-height (getmaxy panel))
-	     (pan-width (getmaxx panel))
-	     (nrows (- pan-height 4))
-	     (ncols (- pan-width 2))
-	     (nlines (number-of-lines script ncols))
-	     (pad (newpad nlines ncols)))
+	  (update-panels)
+	  (doupdate)
 
-	(addstr-formatted panel `(b ,(job-workdir job)))
-	(and (job-args job) ; job-args is sometimes missing (jobs submitted with msub)
-	     (addstr panel (string-append " $ qsub " (job-args job))))
-	(draw-box panel 1 0 (- pan-height 2) pan-width)
-	(move panel (1- pan-height) 1)
-	(addstr-formatted panel
-			  `(b "Q Enter Space") " Go back")
-	(addstr pad script)
+	  ;; Read input, and scroll the script inside the window if up/down is pressed.
+	  (let refresh-pad ((current-line 0))
+	    (prefresh pad current-line 0
+		      (+ 4 (getbegy panel)) (+ 1 (getbegx panel))
+		      (+ 3 (getbegy panel) nrows) (+ (getbegx panel) ncols))
+	    (let process-input ((c (getch panel)))
+	      (cond
 
-	(update-panels)
-	(doupdate)
+	       ((and (eqv? c KEY_DOWN)
+		     (> nlines (+ current-line nrows)))
+		(refresh-pad (1+ current-line)))
 
-	;; Read input, and scroll the script inside the window if up/down is pressed.
-	(let refresh-pad ((current-line 0))
-	  (prefresh pad current-line 0
-		    (+ 2 (getbegy panel)) (+ 1 (getbegx panel))
-		    (+ 1 (getbegy panel) nrows) (+ (getbegx panel) ncols))
-	  (let process-input ((c (getch panel)))
-	    (cond
+	       ((and (eqv? c KEY_UP) (> current-line 0))
+		(refresh-pad (1- current-line)))
 
-	     ((and (eqv? c KEY_DOWN)
-		   (> nlines (+ current-line nrows)))
-	      (refresh-pad (1+ current-line)))
+	       ((eqv? c KEY_RESIZE)
+		(%resize)
+		;; resize function will reset the whole display, so run
+		;; show-script again.
+		(show-script))
 
-	     ((and (eqv? c KEY_UP) (> current-line 0))
-	      (refresh-pad (1- current-line)))
+	       ;; Return if we get enter/space/q, otherwise read a new input character.
+	       ((not (or (eqv? c #\sp)
+			 (eqv? c KEY_ENTER)
+			 (eqv? c #\cr)
+			 (eqv? c #\nl)
+			 (eqv? c #\q)
+			 (eqv? c #\Q)))
+		(process-input (getch panel)))))))))
 
-	     ((eqv? c KEY_RESIZE)
-	      (%resize)
-	      ;; resize function will reset the whole display, so run
-	      ;; show-script again.
-	      (show-script script))
-
-	     ;; Return if we get enter/space/q, otherwise read a new input character.
-	     ((not (or (eqv? c #\sp)
-		       (eqv? c KEY_ENTER)
-		       (eqv? c #\cr)
-		       (eqv? c #\nl)
-		       (eqv? c #\q)
-		       (eqv? c #\Q)))
-	      (process-input (getch panel))))))
-
-	;; Clean up and return.
-	(delwin pad)
-	(hide-panel panel)
-	(update-panels)
-	(doupdate)))))
+    ;; Clean up and return.
+    (hide-panel panel)
+    (update-panels)
+    (doupdate)))
 
 (define (ssh job)
   (endwin)
@@ -482,7 +509,7 @@ for this predicate, sort in the opposite direction."
 		      (resize help-pan 1 (cols))
 		      (mvwin help-pan (1- (lines)) 0)
 		      (drawmenu jobs-menu jobs-pan)))
-	   (show-jobscript (jobscript-viewer script-pan %resize)))
+	   (show-job (job-viewer script-pan %resize)))
 
       ;; Store this menu in menu-list to prevent garbage collection later on.
       (set! menu-list (cons jobs-menu menu-list))
@@ -551,12 +578,12 @@ for this predicate, sort in the opposite direction."
 	  (%resize)
 	  (loop (getch jobs-pan)))
 
-	 ;; Enter or space: view jobscript.
+	 ;; Enter or space: view job details.
 	 ((or (eqv? c #\sp)
 	      (eqv? c KEY_ENTER)
 	      (eqv? c #\cr)
 	      (eqv? c #\nl))
-	  (show-jobscript (selected-job))
+	  (show-job (selected-job))
 	  (loop (getch jobs-pan)))
 
 	 ;; If 'Q' or 'q'  is pressed, quit.  Otherwise, loop.
