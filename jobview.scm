@@ -156,7 +156,8 @@ using the accessor FIELD, e.g. (compare job-effic)."
 			  (req (@ (AllocNodeList ,alloc-nodes)
 				  (TCReqMin ,min-tasks)
 				  (ReqProcPerTask ,proc-per-task)
-				  . ,req-attrs)))
+				  . ,req-attrs))
+			  . ,rest) ; e.g. Messages
 		     (let* (;; Match ID for array sub-jobs "x[y]", or
 			    ;; simply "x" for a regular job:
 			    (match-id (string-match "([0-9]+)(\\[([0-9]+)\\])?" id))
