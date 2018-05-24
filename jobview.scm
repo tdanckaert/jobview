@@ -274,7 +274,7 @@ command '~a' returned '~a', return code ~d.\n"
 			*target-cluster* (job-nodes job)))
 	 (node-xml (process-output read-xml mdiag)))
     (sxml-match node-xml
-		[(list (*TOP* (Data (node (@ (LOAD ,loads) . ,attrs)))) ...)
+		[(list (*TOP* (Data (node (@ (LOAD (,loads "-1")) . ,attrs)))) ...) ; LOAD attribute is sometimes missing
 		 (map string->number loads)])))
 
 (define (job-viewer panel %resize)
