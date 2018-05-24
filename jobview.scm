@@ -334,8 +334,16 @@ resized."
 		     (> nlines (+ current-line nrows)))
 		(refresh-pad (1+ current-line)))
 
+	       ((eqv? c KEY_NPAGE)
+		;; page down: scroll down by nrows, but not beyond (nlines - nrows)
+		(refresh-pad (min (- nlines nrows) (+ current-line nrows))))
+
 	       ((and (eqv? c KEY_UP) (> current-line 0))
 		(refresh-pad (1- current-line)))
+
+	       ((eqv? c KEY_PPAGE)
+		;; page up: scroll up by nrows, but not above line 0.
+		(refresh-pad (max 0 (- current-line nrows))))
 
 	       ((eqv? c KEY_RESIZE)
 		(%resize)
