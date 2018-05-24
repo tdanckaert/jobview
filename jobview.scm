@@ -62,15 +62,19 @@ to stdout."
 process' stdout may be read, and runs the procedure PROC that takes
 this input prot as a single argument.  Throws an exception 'cmd-failed
 if CMD's exit status is non-zero."
-  (let ((err-port (current-error-port)))
-    (set-current-error-port (%make-void-port "w")) ; Temporarily redirect stderr.
-    (let* ((port (open-input-pipe cmd))
-	   (result (proc port))
-	   (status (close-pipe port)))
-      (set-current-error-port err-port)
-      (or (zero? status)
-	  (throw 'cmd-failed cmd status))
-      result)))
+  (let* ((err-pipe (pipe))
+	 (err-write (cdr err-pipe))
+	 (err-read (car err-pipe)))
+    (with-error-to-port err-write
+      (lambda ()
+	(let* ((port (open-input-pipe cmd))
+	       (result (proc port))
+	       (status (close-pipe port)))
+	  (close-port err-write)
+	  (or (zero? status)
+	      (throw 'cmd-failed cmd status
+		     (get-string-all err-read)))
+	  result)))))
 
 (define-record-type <node>
   (make-node procs mem)
@@ -236,17 +240,17 @@ results as a list."
 	(map sxml->job
 	     (filter running?
 		     ((sxpath '(// Data job)) (list jobs child-jobs))))))
-    (lambda (key cmd status)
-      (error (format #f "ERROR: Could not obtain job list: command '~a' returned ~d.\n" cmd status)))))
+    (lambda (key cmd status message)
+      (error (format #f "ERROR: Could not obtain job list: command '~a' returned '~a', return code ~d.\n" cmd message status)))))
 
 (define (get-jobscript job)
   (catch 'cmd-failed
     (lambda () (process-output get-string-all (cat-jobscript job)))
-    (lambda (key cmd status)
+    (lambda (key cmd status message)
       (format #f
 	      "ERROR: Could not get script for job ~a.
-command '~a' returned ~d.\n"
-	      (job-id job) cmd status))))
+command '~a' returned '~a', return code ~d.\n"
+	      (job-id job) cmd message status))))
 
 (define (draw-box win y x ny nx)
   "Draw a box of dimensions NY * NX, with upper left coordinates Y and X."
