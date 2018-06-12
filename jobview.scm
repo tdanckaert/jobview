@@ -91,13 +91,11 @@ if CMD's exit status is non-zero."
 	 (table (make-hash-table (length nodes))))
     (for-each
      (lambda (the-node)
-       (sxml-match the-node [(node (@ (NODEID ,id)
-				      (RCPROC ,rcproc)
-				      (RCMEM (,rcmem "0"))))
-			     (hash-set! table id
-					(make-node (string->number rcproc)
-						   (string->number rcmem)))]))
-     nodes)
+       (sxml-match the-node
+		   [(node (@ (NODEID ,id) (RCPROC ,rcproc) (RCMEM (,rcmem "0"))))
+		    (hash-set! table id
+			       (make-node (string->number rcproc)
+					  (string->number rcmem)))])) nodes)
     table))
 
 (define (number-of-lines string ncols)
