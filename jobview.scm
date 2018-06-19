@@ -159,7 +159,7 @@ using the accessor FIELD, e.g. (compare job-effic)."
 			     (Flags (,flags ""))
 			     (SubmitArgs (,args #f))
 			     . ,job-attrs )
-			  (req (@ (AllocNodeList ,alloc-nodes)
+			  (req (@ (AllocNodeList (,alloc-nodes #f))
 				  (TCReqMin ,min-tasks)
 				  (ReqProcPerTask ,proc-per-task)
 				  . ,req-attrs))
@@ -174,18 +174,20 @@ using the accessor FIELD, e.g. (compare job-effic)."
 			    ;; AllocNodeList is a comma-separated list
 			    ;; of nodes, each node optionally followed
 			    ;; by the number of procs ":nprocs"
-			    (nodes (map (lambda (s)
-					  (let ((index (string-index s #\:)))
-					    (if index
-						(substring s 0 index)
-						s)))
-					(string-split alloc-nodes #\,)))
+			    (nodes (and alloc-nodes
+					;; alloc-nodes can be missing if Torque and Moab get out of sync.
+					(map (lambda (s)
+					       (let ((index (string-index s #\:)))
+						 (if index
+						     (substring s 0 index)
+						     s)))
+					     (string-split alloc-nodes #\,))))
 			    (interactive? (member "INTERACTIVE"
 						  (string-split flags #\,)))
-			    (host (car nodes))
 			    (tasks (string->number (string-trim-right min-tasks #\*)))
 			    (procs (* tasks (if (equal? proc-per-task "-1") ; "-1" means "all"
-						(node-procs (hash-ref *node-properties* host))
+						(if nodes (node-procs (hash-ref *node-properties* (car nodes)))
+						    0)
 						(string->number proc-per-task))))
 			    (psutil (string->number psutil))
 			    (tstart (string->number tstart))
@@ -291,8 +293,9 @@ resized."
 		      "<Interactive job>"
 		      (get-jobscript job)))
 	  ;; Zip load with node name, and sort the pairs by increasing load:
-	  (loads (sort (zip (job-nodes job) (job-node-loads job))
-		       (lambda (x y) (< (cadr x) (cadr y))))))
+	  (loads (and (job-nodes job)
+		      (sort (zip (job-nodes job) (job-node-loads job))
+			    (lambda (x y) (< (cadr x) (cadr y)))))))
       (show-panel panel)
       (let show-script ()
 	(let* ((pan-height (getmaxy panel))
@@ -309,12 +312,16 @@ resized."
 	  (move panel 1 1)
 	  (addstr panel "Load:")
 	  (move panel 2 1)
-	  (let ((min-load (first loads))
-		(max-load (last loads))
-		(median-load (list-ref loads (quotient (length loads) 2))))
-	    (addstr-formatted panel '(b "min: ") (format #f "~5,2f (~a) " (cadr min-load) (car min-load))
-			      '(b "mdn: ") (format #f "~5,2f (~a) " (cadr median-load) (car median-load))
-			      '(b "max: ") (format #f "~5,2f (~a) " (cadr max-load) (car max-load))))
+	  (if loads
+	      (let ((min-load (first loads))
+		    (max-load (last loads))
+		    (median-load (list-ref loads (quotient (length loads) 2))))
+		(addstr-formatted panel
+				  '(b "min: ") (format #f "~5,2f (~a) " (cadr min-load) (car min-load))
+				  '(b "mdn: ") (format #f "~5,2f (~a) " (cadr median-load) (car median-load))
+				  '(b "max: ") (format #f "~5,2f (~a) " (cadr max-load) (car max-load))))
+	      (addstr-formatted panel
+				`(b "*Active job has no allocated nodes*")))
 	  (draw-box panel 3 0 (- pan-height 4) pan-width)
 	  (move panel 3 0)
 	  (addch panel (acs-ltee))
@@ -374,8 +381,13 @@ resized."
 
 (define (ssh job)
   (endwin)
-  (system (format #f "ssh -tt login-hopper.uantwerpen.be ssh ~a"
-		  (car (job-nodes job))))
+  (if (job-nodes job)
+      (system (format #f "ssh -tt login-hopper.uantwerpen.be ssh ~a"
+		      (car (job-nodes job))))
+      (begin
+	(format #t "*Active job has no allocated nodes*
+Press <Enter> to continue")
+	(get-char (current-input-port))))
   (doupdate))
 
 ;; Column width, label, and formatting for the job menu:
