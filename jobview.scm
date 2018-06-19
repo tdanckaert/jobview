@@ -16,7 +16,7 @@
 	     (ncurses panel))
 
 (define-record-type <job>
-  (make-job user id array-id name procs nodes workdir args effic tstart walltime)
+  (make-job user id array-id name procs nodes interactive? workdir args effic tstart walltime)
   job?
   (user job-user)
   (id job-id)
@@ -24,6 +24,7 @@
   (name job-name)
   (procs job-procs)
   (nodes job-nodes)
+  (interactive? job-interactive?)
   (workdir job-workdir)
   (args job-args)
   (effic job-effic)
@@ -155,6 +156,7 @@ using the accessor FIELD, e.g. (compare job-effic)."
 			     (AWDuration (,used-walltime "0")) ; "AWDuration" is missing for jobs that have just started
 			     (ReqAWDuration ,walltime)
 			     (IWD ,dir)
+			     (Flags (,flags ""))
 			     (SubmitArgs (,args #f))
 			     . ,job-attrs )
 			  (req (@ (AllocNodeList ,alloc-nodes)
@@ -177,7 +179,9 @@ using the accessor FIELD, e.g. (compare job-effic)."
 					    (if index
 						(substring s 0 index)
 						s)))
-					    (string-split alloc-nodes #\,)))
+					(string-split alloc-nodes #\,)))
+			    (interactive? (member "INTERACTIVE"
+						  (string-split flags #\,)))
 			    (host (car nodes))
 			    (tasks (string->number (string-trim-right min-tasks #\*)))
 			    (procs (* tasks (if (equal? proc-per-task "-1") ; "-1" means "all"
@@ -187,7 +191,8 @@ using the accessor FIELD, e.g. (compare job-effic)."
 			    (tstart (string->number tstart))
 			    (walltime (string->number walltime))
 			    (used-walltime (string->number used-walltime)))
-		       (make-job user job-id array-id name procs nodes dir args
+		       (make-job user job-id array-id name procs nodes
+				 interactive? dir args
 				 ;; To calculate efficiency, we could use
 				 ;; the XML entry "StatsPSDed", demanded
 				 ;; processor time, but this entry is
@@ -282,7 +287,9 @@ command '~a' returned '~a', return code ~d.\n"
 job in PANEL.  Procedure %RESIZE will be called when the terminal is
 resized."
   (lambda (job)
-    (let ((script (get-jobscript job))
+    (let ((script (if (job-interactive? job)
+		      "<Interactive job>"
+		      (get-jobscript job)))
 	  ;; Zip load with node name, and sort the pairs by increasing load:
 	  (loads (sort (zip (job-nodes job) (job-node-loads job))
 		       (lambda (x y) (< (cadr x) (cadr y))))))
