@@ -174,13 +174,19 @@
 	  (return-operator (cdr (assoc char single-operators)))))))))
   (define (ionumber chars)
     (let ((c (get-char port)))
-      (if (char-numeric? c)
-	  (ionumber (cons c chars))
-	  (begin ; end of numeric characters.  Either return an IO_NUMBER, or continue parsing regular token
-	    (unget-char port c)
-	    (if (or (eq? c #\<) (eq? c #\>))
-		`(IO_NUMBER ,(reverse-list->string chars))
-		(collect chars '()))))))
+      (cond
+       ((eof-object? c)
+	(collect chars '()))
+       ((char-numeric? c)
+	(ionumber (cons c chars)))
+       (else
+	(unget-char port c)
+	;; end of numeric characters.  Return an IO_NUMBER if
+	;; delimited by < or >, otherwise continue parsing regular
+	;; token:
+	(if (or (eq? c #\<) (eq? c #\>))
+	    `(IO_NUMBER ,(reverse-list->string chars))
+	    (collect chars '()))))))
   (define (token-so-far chars token)
     (if (null? chars) token
 	(cons (reverse-list->string chars) token)))
