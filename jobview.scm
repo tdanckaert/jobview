@@ -1,4 +1,7 @@
-(use-modules (srfi srfi-1)
+(add-to-load-path (dirname (current-filename)))
+
+(use-modules (bash-parse)
+	     (srfi srfi-1)
 	     (srfi srfi-9)
 	     (srfi srfi-13)
 	     (srfi srfi-26)
@@ -282,6 +285,151 @@ command '~a' returned '~a', return code ~d.\n"
 		[(list (*TOP* (Data (node (@ (LOAD (,loads "-1")) . ,attrs)))) ...) ; LOAD attribute is sometimes missing
 		 (map string->number loads)])))
 
+(define (pretty-print win port)
+  "Read a job script from PORT and print it to WIN with syntax
+highlighting."
+
+  (define (get-operator op)
+    (case op
+      ((LPAREN)
+       "(")
+      ((RPAREN)
+       ")")
+      ((NEWLINE)
+       "\n")
+      ((AMPERSAND)
+       "&")
+      ((AND_IF)
+       "&&")
+      ((OR_IF)
+       "||")
+      ((PIPE)
+       "|")
+      ((SEMI)
+       ";")
+      ((DSEMI)
+       ";;")
+      ((LESS)
+       "<")
+      ((LESSAND)
+       "<&")
+      ((DLESS)
+       "<<")
+      ((LESSDASH)
+       "<<-")
+      ((GREATER)
+       ">")
+      ((DGREAT)
+       ">>")
+      ((GREATAND)
+       ">&")
+      ((CLOBBER)
+       ">|")
+      (else
+       #f)))
+
+  (define (print token)
+    (let ((old-attrs (attr-get win)))
+      (match token
+
+	('NEWLINE
+	 (addstr win "\n"))
+
+	((and x (or 'IF 'THEN 'ELSE 'ELIF 'FI 'DO 'DONE
+		 'CASE 'ESAC 'WHILE 'UNTIL 'FOR 'IN))
+	 (attr-on! win (logior A_BOLD (color-pair 1)))
+	 (addstr win (string-downcase (symbol->string x)))
+	 (attr-off! win (logior A_BOLD (color-pair 1))))
+
+	(('COMMENT text)
+	 (attr-set! win A_DIM)
+	 (addstr win "#")
+	 (addstr win text)
+	 (attr-set! win (car old-attrs)))
+
+	(('PBS text)
+	 (attr-set! win A_DIM)
+	 (addstr win "#")
+	 (attr-set! win A_BOLD)
+	 (addstr win "PBS")
+	 (addstr win text)
+	 (attr-set! win (car old-attrs)))
+
+	(((or 'WHITESPACE 'IO_NUMBER ) text)
+	 (addstr win text))
+
+	(('WORD x ...)
+	 (print x))
+
+	(('SUBSTITUTE x ...)
+	 (addstr win "$(")
+	 (print-script (filter-spaces (tokenize x)))
+	 (addstr win ")"))
+
+	(('BACKQUOTE x ...)
+	 (addstr win "`")
+	 (print x)
+	 (addstr win "`"))
+
+	((x)
+	 (print x))
+
+	((x y ...)
+	 (print x)
+	 (print y))
+
+	(x
+	 (addstr win (if (string? x) x
+			 (get-operator x)))))))
+
+  (define (tokenize substitution)
+    (lambda ()
+      (if (null? substitution)
+	  '*eoi*
+	  (let ((token (car substitution)))
+	    (set! substitution (cdr substitution))
+	    token))))
+
+  (define (print-script get-token)
+    (define module-state #f)
+    (define token-count 0)
+    (let loop ((token (get-token)))
+      (unless (eq? token '*eoi*)
+	(if (eq? module-state 'EXPECT-MODULE-NAME)
+	    (let ((old-attrs (attr-get win)))
+	      (attr-set! win A_STANDOUT)
+	      (print token)
+	      (attr-set! win (car old-attrs)))
+	    (print token))
+	(match token
+	  ((or 'NEWLINE 'SEMI 'PIPE 'AMPERSAND 'AND_IF 'OR_IF 'DSEMI 'RPAREN)
+	   ;; We expect a new command after these operators, so reset token-count.
+	   (set! token-count 0)
+	   (set! module-state #f))
+	  (('WORD x)
+	   (cond
+	    ((and (eq? token-count 0) (equal? x "module"))
+	     (set! module-state 'EXPECT-LOAD))
+	    ((and (eq? module-state 'EXPECT-LOAD) (or (equal? x "load") (equal? x "add")))
+	     (set! module-state 'EXPECT-MODULE-NAME)))
+	   (set! token-count (1+ token-count)))
+	  (else
+	   #f))
+
+	(loop (get-token)))))
+
+  (define (filter-spaces get-token)
+    (lambda ()
+      (let loop ((token (get-token)))
+	(match token
+	  (('WHITESPACE x)
+	   (addstr win x)
+	   (loop (get-token)))
+	  (else
+	   token)))))
+
+  (print-script (filter-spaces (tokenizer port))))
+
 (define (job-viewer panel %resize)
   "Return a procedure that, given a job, displays details about that
 job in PANEL.  Procedure %RESIZE will be called when the terminal is
@@ -329,7 +477,10 @@ resized."
 	  (move panel (1- pan-height) 1)
 	  (addstr-formatted panel
 			    `(b "Q Enter Space") " Go back")
-	  (addstr pad script)
+
+	  (call-with-input-string script
+			   (lambda (port)
+			     (pretty-print pad port)))
 
 	  (update-panels)
 	  (doupdate)
@@ -510,6 +661,12 @@ for this predicate, sort in the opposite direction."
   (cbreak!)
   (noecho!)
   (curs-set 0)
+
+  (if (has-colors?)
+      (begin
+	(start-color!)
+	(use-default-colors )
+	(init-pair! 1 COLOR_MAGENTA -1)))
 
   (keypad! script-pan #t)
   (keypad! jobs-pan #t)
