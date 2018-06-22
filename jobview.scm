@@ -6,6 +6,7 @@
 	     (srfi srfi-13)
 	     (srfi srfi-26)
 	     (ice-9 format)
+	     (ice-9 getopt-long)
 	     (ice-9 match)
 	     (ice-9 popen)
 	     (ice-9 rdelim)
@@ -17,6 +18,29 @@
 	     (ncurses curses)
 	     (ncurses menu)
 	     (ncurses panel))
+
+(define +options+ (getopt-long (command-line)
+			       '((help (single-char #\h) (value #f))
+				 (verbose (single-char #\v) (value #f)))))
+
+(define (show-help)
+  (let* ((command (car (command-line)))
+	 (last-sep (string-rindex command file-name-separator?))
+	 (program-name (if last-sep
+			   (substring command (1+ last-sep))
+			   command)))
+    (format #t "~a [options] [cluster]
+
+  -v, --verbose  Show external commands.
+  -h, --help     Display this help.
+
+" program-name)))
+
+(if (option-ref +options+ 'help #f)
+    (begin (show-help)
+	   (exit 0)))
+
+(define +verbose?+ (option-ref +options+ 'verbose #f))
 
 (define-record-type <job>
   (make-job user id array-id name procs nodes interactive? workdir args effic tstart walltime)
@@ -35,31 +59,32 @@
   (walltime job-walltime))
 
 ;; The cluster on which we are running, or #f if none:
-(define *host-cluster*
+(define +host-cluster+
   (getenv "VSC_INSTITUTE_CLUSTER"))
 
 ;; The cluster from which we want to obtain information:
-(define *target-cluster*
-  (let ((args (program-arguments)))
-    (if (> (length args) 1)
-	(second args)
-	*host-cluster*)))
+(define +target-cluster+
+  (let ((args (option-ref +options+ '() '())))
+    (if (> (length args) 0)
+	(car args)
+	+host-cluster+)))
 
-;; If no *target-cluster* is known, there is not much we can do:
-(or *target-cluster*
+;; If no +target-cluster+ is known, there is not much we can do:
+(unless +target-cluster+
+    (show-help)
     (error "Please specify the cluster name."))
 
 (define (cat-jobscript job)
   "An external command which outputs the jobscript for JOBID on stdout."
   (format #f "ssh master-~a.uantwerpen.be sudo /bin/cat /var/spool/torque/server_priv/jobs/~a.~a.SC"
-	  *target-cluster*
+	  +target-cluster+
 	  (job-id job)
-	  *target-cluster*))
+	  +target-cluster+))
 
 (define (checkjob-all)
   "An external command which prints an XML-formatted list of all jobs
 to stdout."
-  (format #f "ssh login-~a.uantwerpen.be checkjob -v --xml ALL" *target-cluster*))
+  (format #f "ssh login-~a.uantwerpen.be checkjob -v --xml ALL" +target-cluster+))
 
 (define (process-output proc cmd)
   "Runs CMD as an external process, with an input port from which the
@@ -70,6 +95,7 @@ if CMD's exit status is non-zero."
 	 (err-write (cdr err-pipe))
 	 (err-read (car err-pipe)))
     (endwin)
+    (if +verbose?+ (format #t "~a... " cmd))
     (with-error-to-port err-write
       (lambda ()
 	(let* ((port (open-input-pipe cmd))
@@ -79,6 +105,7 @@ if CMD's exit status is non-zero."
 	  (or (zero? status)
 	      (throw 'cmd-failed cmd status
 		     (get-string-all err-read)))
+	  (if +verbose?+ (format #t "Done~%"))
 	  (doupdate)
 	  result)))))
 
@@ -91,8 +118,8 @@ if CMD's exit status is non-zero."
 (define *node-properties*
   (let* ((nodes ((sxpath '(// Data node))
 		 (process-output
-		  xml->sxml (format #f "ssh login-~a.uantwerpen.be checknode ALL --xml"
-				    *target-cluster*))))
+		  xml->sxml (format #f "ssh login-~a.uantwerpen.be checknode --xml ALL"
+				    +target-cluster+))))
 	 (table (make-hash-table (length nodes))))
     (for-each
      (lambda (the-node)
@@ -245,7 +272,7 @@ results as a list."
 			     (process-output read-xml
 					     ;; For efficiency, we chain all "checkjob <child-id>" commands and wrap them in one ssh command:
 					     (format #f "ssh login-~a.uantwerpen.be \"~{checkjob -v --xml ~a~^; ~}\""
-						     *target-cluster* child-jobids))
+						     +target-cluster+ child-jobids))
 			     '())))
 	(map sxml->job
 	     (filter running?
@@ -281,7 +308,7 @@ command '~a' returned '~a', return code ~d.\n"
   "Get the load for each node allocated to JOB, as reported by 'mdiag
 -n' or 'checknode'."
   (let* ((mdiag (format #f "ssh login-~a.uantwerpen.be \"~{mdiag -n --xml ~a~^; ~}\""
-			*target-cluster* (job-nodes job)))
+			+target-cluster+ (job-nodes job)))
 	 (node-xml (process-output read-xml mdiag)))
     (sxml-match node-xml
 		[(list (*TOP* (Data (node (@ (LOAD (,loads "-1")) . ,attrs)))) ...) ; LOAD attribute is sometimes missing
