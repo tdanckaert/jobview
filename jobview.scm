@@ -69,6 +69,7 @@ if CMD's exit status is non-zero."
   (let* ((err-pipe (pipe))
 	 (err-write (cdr err-pipe))
 	 (err-read (car err-pipe)))
+    (endwin)
     (with-error-to-port err-write
       (lambda ()
 	(let* ((port (open-input-pipe cmd))
@@ -78,6 +79,7 @@ if CMD's exit status is non-zero."
 	  (or (zero? status)
 	      (throw 'cmd-failed cmd status
 		     (get-string-all err-read)))
+	  (doupdate)
 	  result)))))
 
 (define-record-type <node>
