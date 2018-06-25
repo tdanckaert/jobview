@@ -99,6 +99,7 @@ if CMD's exit status is non-zero."
     (with-error-to-port err-write
       (lambda ()
 	(let* ((port (open-input-pipe cmd))
+	       (ignore (setvbuf port 'block))
 	       (result (proc port))
 	       (status (close-pipe port)))
 	  (close-port err-write)
