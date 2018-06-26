@@ -578,7 +578,7 @@ Press <Enter> to continue")
     (8 "User" "~a")
     (20 "Name" "~20@y")
     (5 "Procs" "~5a")
-    (7 "Effic" "~6,2f ") ; floating point efficiency, e.g. ' 99.05'
+    (7 " Effic" "~6,2f ") ; floating point efficiency, e.g. ' 99.05'
     (9 "Remain" "~{~2,'0d~^:~} ") ; remaining time in hh:mm:ss format
     (19 "Time started" "~a")
     (5 "ArrayId" "~a")))
@@ -587,13 +587,15 @@ Press <Enter> to continue")
   (let ((y-start (getcury win)))
     (for-each
      (lambda (menu-col)
-       (let ((x-start (getcurx win))
-	     (width (first menu-col))
-	     (title (second menu-col)))
-	 ;; write first character of each colunn label in bold to
+       (let* ((x-start (getcurx win))
+	      (width (first menu-col))
+	      (title (second menu-col))
+	      (spacing (string-skip title char-whitespace?)))
+	 ;; write first non-whitespace character of each column label in bold to
 	 ;; indicate it's a key command:
-	 (addch win (bold (string-ref title 0)))
-	 (addstr win (substring title 1))
+	 (addstr win (substring title 0 spacing)) ; leading spaces
+	 (addch win (bold (string-ref title spacing))) ; first non-whitespace char
+	 (addstr win (substring title (1+ spacing))) ; remaining characters
 	 (move win y-start (+ x-start 1 width))))
      *menu-table*)))
 
