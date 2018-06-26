@@ -272,7 +272,7 @@ results as a list."
 	     (child-jobids (sxml-match array-children
 				       [(list (child (@ (Name ,jobid) . ,rest)) ...) jobid]))
 	     (child-jobs
-	      (if (nil? child-jobids)
+	      (if (null? child-jobids)
 		  '()
 		  (process-output
 		   read-xml
