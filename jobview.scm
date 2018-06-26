@@ -579,7 +579,7 @@ Press <Enter> to continue")
     (20 "Name" "~20@y")
     (5 "Procs" "~5a")
     (7 " Effic" "~6,2f ") ; floating point efficiency, e.g. ' 99.05'
-    (9 "Remain" "~{~2,'0d~^:~} ") ; remaining time in hh:mm:ss format
+    (10 " Remain" "~a")
     (19 "Time started" "~a")
     (5 "ArrayId" "~a")))
 
@@ -661,20 +661,24 @@ Press <Enter> to continue")
   (post-menu menu))
 
 (define (job->menu-item job tnow)
-  (new-item
-   (format #f "~5a~a" (job-id job) (if (job-array-id job) "[]" "  "))
-   (format-table-row (cdr *menu-table*) ; first column 'id' is the menu item name
-		     (job-user job)
-		     (job-name job)
-		     (job-procs job)
-		     (job-effic job)
-		     ;; Remaining time:
-		     (hour-min-sec (- (+ (job-tstart job)
-					 (job-walltime job))
-				      tnow))
-		     (strftime "%a %b %02d %T" (localtime (job-tstart job)))
-		     (if (job-array-id job)
-			 (job-array-id job) ""))))
+  (let* ((name (format #f "~5a~a"
+		       (job-id job)
+		       (if (job-array-id job) "[]" "  ")))
+	 (time-remaining (- (+ (job-tstart job) (job-walltime job))
+			    tnow))
+	 (hh:mm:ss (format #f "~:[ ~;-~]~{~2,'0d~^:~}"
+			   (< time-remaining 0)
+			   (hour-min-sec (abs time-remaining))))
+	 (label (format-table-row (cdr *menu-table*) ; first column 'id' is the menu item name
+			   (job-user job)
+			   (job-name job)
+			   (job-procs job)
+			   (job-effic job)
+			   hh:mm:ss
+			   (strftime "%a %b %02d %T" (localtime (job-tstart job)))
+			   (if (job-array-id job)
+			       (job-array-id job) ""))))
+    (new-item name label)))
 
 (define (sort-up-down list less)
   "Sort LIST according to predicate LESS.  If LIST is already sorted
