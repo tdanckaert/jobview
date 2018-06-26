@@ -218,7 +218,8 @@ using the accessor FIELD, e.g. (compare job-effic)."
 						  (string-split flags #\,)))
 			    (tasks (string->number (string-trim-right min-tasks #\*)))
 			    (procs (* tasks (if (equal? proc-per-task "-1") ; "-1" means "all"
-						(if nodes (node-procs (hash-ref *node-properties* (car nodes)))
+						(if nodes
+						    (node-procs (hash-ref *node-properties* (car nodes)))
 						    0)
 						(string->number proc-per-task))))
 			    (psutil (string->number psutil))
@@ -270,12 +271,14 @@ results as a list."
 				     ((sxpath '(// Data job ArrayInfo child)) jobs)))
 	     (child-jobids (sxml-match array-children
 				       [(list (child (@ (Name ,jobid) . ,rest)) ...) jobid]))
-	     (child-jobs (if (not (nil? child-jobids))
-			     (process-output read-xml
-					     ;; For efficiency, we chain all "checkjob <child-id>" commands and wrap them in one ssh command:
-					     (format #f "ssh login-~a.uantwerpen.be \"~{checkjob -v --xml ~a~^; ~}\""
-						     +target-cluster+ child-jobids))
-			     '())))
+	     (child-jobs
+	      (if (nil? child-jobids)
+		  '()
+		  (process-output
+		   read-xml
+		   ;; For efficiency, we chain all "checkjob <child-id>" commands and wrap them in one ssh command:
+		   (format #f "ssh login-~a.uantwerpen.be \"~{checkjob -v --xml ~a~^; ~}\""
+			   +target-cluster+ child-jobids)))))
 	(map sxml->job
 	     (filter running?
 		     ((sxpath '(// Data job)) (list jobs child-jobs))))))
@@ -661,9 +664,7 @@ Press <Enter> to continue")
   (post-menu menu))
 
 (define (job->menu-item job tnow)
-  (let* ((name (format #f "~5a~a"
-		       (job-id job)
-		       (if (job-array-id job) "[]" "  ")))
+  (let* ((name (format #f "~5a~:[  ~;[]~]" (job-id job) (job-array-id job)))
 	 (time-remaining (- (+ (job-tstart job) (job-walltime job))
 			    tnow))
 	 (hh:mm:ss (format #f "~:[ ~;-~]~{~2,'0d~^:~}"
@@ -721,8 +722,8 @@ for this predicate, sort in the opposite direction."
   (let display-jobs ((jobs (get-joblist))
 		     (sort-p (compare job-effic)))
     (let* ((jobs (sort-up-down jobs sort-p))
-	   (jobs-menu (new-menu (map (cut job->menu-item <> (current-time))
-				     jobs)))
+	   (jobs-menu
+	    (new-menu (map (cut job->menu-item <> (current-time)) jobs)))
 	   (selected-job
 	    (lambda () (list-ref jobs (item-index (current-item jobs-menu)))))
 	   (update-jobs (lambda (joblist sort-p)
