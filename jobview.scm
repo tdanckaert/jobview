@@ -72,7 +72,8 @@
 ;; If no +target-cluster+ is known, there is not much we can do:
 (unless +target-cluster+
     (show-help)
-    (error "Please specify the cluster name."))
+    (display "ERROR: Please specify the cluster name.\n")
+    (exit 1))
 
 (define (cat-jobscript job)
   "An external command which outputs the jobscript for JOBID on stdout."
@@ -279,7 +280,9 @@ results as a list."
 	     (filter running?
 		     ((sxpath '(// Data job)) (list jobs child-jobs))))))
     (lambda (key cmd status message)
-      (error (format #f "ERROR: Could not obtain job list: command '~a' returned '~a', return code ~d.\n" cmd message status)))))
+      (error (format #f "ERROR: Could not obtain job list: \
+command '~a' returned '~a', return code ~d.\n"
+		     cmd (string-trim-right message #\newline) status)))))
 
 (define (get-jobscript job)
   (catch 'cmd-failed
@@ -288,7 +291,7 @@ results as a list."
       (format #f
 	      "ERROR: Could not get script for job ~a.
 command '~a' returned '~a', return code ~d.\n"
-	      (job-id job) cmd message status))))
+	      (job-id job) cmd (string-trim-right message #\newline) status))))
 
 (define (draw-box win y x ny nx)
   "Draw a box of dimensions NY * NX, with upper left coordinates Y and X."
