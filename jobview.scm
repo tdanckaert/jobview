@@ -325,45 +325,6 @@ command '~a' returned '~a', return code ~d.\n"
   "Read a job script from PORT and print it to WIN with syntax
 highlighting."
 
-  (define (get-operator op)
-    (case op
-      ((LPAREN)
-       "(")
-      ((RPAREN)
-       ")")
-      ((NEWLINE)
-       "\n")
-      ((AMPERSAND)
-       "&")
-      ((AND_IF)
-       "&&")
-      ((OR_IF)
-       "||")
-      ((PIPE)
-       "|")
-      ((SEMI)
-       ";")
-      ((DSEMI)
-       ";;")
-      ((LESS)
-       "<")
-      ((LESSAND)
-       "<&")
-      ((DLESS)
-       "<<")
-      ((LESSDASH)
-       "<<-")
-      ((GREATER)
-       ">")
-      ((DGREAT)
-       ">>")
-      ((GREATAND)
-       ">&")
-      ((CLOBBER)
-       ">|")
-      (else
-       #f)))
-
   (define (print token)
     (let ((old-attrs (attr-get win)))
       (match token
@@ -416,7 +377,7 @@ highlighting."
 
 	(x
 	 (addstr win (if (string? x) x
-			 (get-operator x)))))))
+			 (operator->string x)))))))
 
   (define (tokenize substitution)
     (lambda ()

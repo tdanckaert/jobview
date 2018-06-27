@@ -1,5 +1,5 @@
 (define-module (bash-parse)
-  #:export (tokenizer))
+  #:export (tokenizer operator->string))
 
 (use-modules (ice-9 format)
 	     (ice-9 ports)
@@ -10,6 +10,48 @@
 
 ;; Shell Command Language
 ;; http://pubs.opengroup.org/onlinepubs/9699919799/utilities/V3_chap02.html#tag_18_10
+
+;; alist to find the operator symbol corresponding to a string:
+(define operator-alist
+  '(("&&" . AND_IF)
+    ("||" . OR_IF)
+    (";;" . DSEMI)
+    (">>" . DGREAT)
+    (">&" . GREATAND)
+    (">|" . CLOBBER)
+    ("<<-" . DLESSDASH)
+    ("<<" . DLESS)
+    ("<&" . LESSAND)
+    ("<>" . LESSGREAT)
+    ("<" . LESS)
+    (">" . GREATER)
+    ("|" . PIPE)
+    ("&" . AMPERSAND)
+    (";" . SEMI)
+    ("(" . LPAREN)
+    (")" . RPAREN)
+    ("\n" . NEWLINE)))
+
+;; alist for reverse lookups:
+(define operator-inverse-alist
+  (map (lambda (x) (cons (cdr x) (car x))) operator-alist))
+
+(define (operator->string op)
+  (assq-ref operator-inverse-alist op))
+
+;; We use the keys from operator-alist for a regular expression to
+;; match operators.  The regular expression is used to match
+;; three-character strings (maximum length of an operator) as an
+;; operator and 2 optional trailing characters.
+(define operator-rx
+  (let* ((operators (map car operator-alist))
+	 ;; Sort operators in inverse alphabetical order: we want to
+	 ;; match ";;" before ";", "<<" before "<" etc.
+	 (operator-regexes (map regexp-quote (sort operators string>?))))
+    (make-regexp
+     ;; Join individual operator regular expressions by "OR", match 2
+     ;; optional trailing characters.
+     (string-append "^(" (string-join operator-regexes "|") ")(.)?(.)?"))))
 
 (define (reserved-word token)
   "If TOKEN corresponds to a reserved word, return the symbol for that word, otherwise #f."
@@ -27,10 +69,8 @@
       ("until" . UNTIL)
       ("for" . FOR)
       ("in" . IN)))
-  (let ((entry
-	 (and (null? (cdr token)) ; ensure token consists of a single string
-	      (assoc (car token) reserved-alist))))
-    (and entry (cdr entry))))
+  (and (null? (cdr token)) ; ensure token consists of a single string
+       (assoc-ref reserved-alist (car token))))
 
 (define (tokenizer port)
   (define paren-depth 0)
@@ -132,51 +172,24 @@
 	(else ; other reserved words are returned as is:
 	 reserved))))
 
-  (define (match-operator str)
-    (define operators
-      (make-regexp
-       "(>>|>&|>\\||>|<<-|<<|<>|<&|<|;;|;|&&|&|[(]|[)]|[|][|]|[|]|\n)(.)?(.)?"))
-
-    (define operator-alist
-      '(("&&" . AND_IF)
-	("||" . OR_IF)
-	(";;" . DSEMI)
-	(">>" . DGREAT)
-	(">&" . GREATAND)
-	(">|" . CLOBBER)
-	("<<-" . DLESSDASH)
-	("<<" . DLESS)
-	("<&" . LESSAND)
-	("<>" . LESSGREAT)
-	("<" . LESS)
-	(">" . GREATER)
-	("|" . PIPE)
-	("&" . AMPERSAND)
-	(";" . SEMI)
-	("(" . LPAREN)
-	(")" . RPAREN)
-	("\n" . NEWLINE)))
-
-    (let* ((match (regexp-exec operators str))
-	   (op (match:substring match 1))
-	   (char1 (match:start match 2))
-	   (char2 (match:start match 3)))
+  (define (operator char)
+    (let* ((second (get-char port))
+	   (third (get-char port))
+	   (str (if (eof-object? second)
+		    (string char)
+		    (if (eof-object? third)
+			(string char second)
+			(string char second third))))
+	   (matches (regexp-exec operator-rx str))
+	   (op (match:substring matches 1))
+	   (char1 (match:start matches 2))
+	   (char2 (match:start matches 3))
+	   (result (assoc-ref operator-alist op)))
       (if char2
 	  (unget-char port (string-ref str char2)))
       (if char1
 	  (unget-char port (string-ref str char1)))
-      (assoc op operator-alist)))
-
-  (define (operator char)
-    (let* ((second (get-char port))
-	   (third (get-char port))
-	   (candidate (if (eof-object? second)
-			  (string char)
-			  (if (eof-object? third)
-			      (string char second)
-			      (string char second third))))
-	   (my-match (match-operator candidate)))
-      (return-operator (cdr my-match))))
+      (return-operator result)))
   (define (ionumber chars)
     (let ((c (get-char port)))
       (cond
