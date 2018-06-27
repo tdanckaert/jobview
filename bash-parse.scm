@@ -3,6 +3,7 @@
 
 (use-modules (ice-9 format)
 	     (ice-9 ports)
+	     (ice-9 regex)
 	     (ice-9 q)
 	     (ice-9 rdelim)
 	     (ice-9 textual-ports))
@@ -67,6 +68,27 @@
   (define (return-operator op)
     (set! token-count 0)
     (case op
+      ((LPAREN)
+       (if (not (expect-case?))
+	   (set! paren-depth (1+ paren-depth))))
+      ((RPAREN)
+       (if (expect-case?)
+	   (begin
+	     (set-case-state! 'INSIDE-CASE)
+	     (set! expect-command? #t)
+	     (set! token-count 0)
+	     (set! have-for? #f))
+	   (set! paren-depth (1- paren-depth)))
+       (if (eq? paren-depth -1)
+	   ;; When parsing a nested expression from a command
+	   ;; substitution, paren-depth -1 means we have reached the
+	   ;; closing ) for that substitution.  At the top-level,
+	   ;; paren-depth -1 would indicate a syntax error...
+	   (set! op 'CLOSE-SUBSTITUTION)))
+      ((NEWLINE)
+       (set! expect-command? #t)
+       (set! token-count 0)
+       (set! have-for? #f))
       ((SEMI PIPE AMPERSAND AND_IF OR_IF)
        (set! expect-command? #t))
       ((DSEMI)
@@ -110,68 +132,51 @@
 	(else ; other reserved words are returned as is:
 	 reserved))))
 
-  (define multi-operators
-    '(("&&" . AND_IF)
-      ("||" . OR_IF)
-      (";;" . DSEMI)
-      (">>" . DGREAT)
-      (">&" . GREATAND)
-      (">|" . CLOBBER)
-      ("<&" . LESSAND)
-      ("<>" . LESSGREAT)))
-  (define single-operators
-    '((#\< . LESS)
-      (#\> . GREATER)
-      (#\& . AMPERSAND)
-      (#\; . SEMI)
-      (#\| . PIPE)))
+  (define (match-operator str)
+    (define operators
+      (make-regexp
+       "(>>|>&|>\\||>|<<-|<<|<>|<&|<|;;|;|&&|&|[(]|[)]|[|][|]|[|]|\n)(.)?(.)?"))
+
+    (define operator-alist
+      '(("&&" . AND_IF)
+	("||" . OR_IF)
+	(";;" . DSEMI)
+	(">>" . DGREAT)
+	(">&" . GREATAND)
+	(">|" . CLOBBER)
+	("<<-" . DLESSDASH)
+	("<<" . DLESS)
+	("<&" . LESSAND)
+	("<>" . LESSGREAT)
+	("<" . LESS)
+	(">" . GREATER)
+	("|" . PIPE)
+	("&" . AMPERSAND)
+	(";" . SEMI)
+	("(" . LPAREN)
+	(")" . RPAREN)
+	("\n" . NEWLINE)))
+
+    (let* ((match (regexp-exec operators str))
+	   (op (match:substring match 1))
+	   (char1 (match:start match 2))
+	   (char2 (match:start match 3)))
+      (if char2
+	  (unget-char port (string-ref str char2)))
+      (if char1
+	  (unget-char port (string-ref str char1)))
+      (assoc op operator-alist)))
+
   (define (operator char)
-    (case char
-     ((#\( )
-      (if (not (expect-case?))
-	  (set! paren-depth (1+ paren-depth)))
-      'LPAREN)
-     ((#\) )
-      (if (expect-case?)
-	  (begin
-	    (set-case-state! 'INSIDE-CASE)
-	    (set! expect-command? #t)
-	    (set! token-count 0)
-	    (set! have-for? #f))
-	  (set! paren-depth (1- paren-depth)))
-      (if (eq? paren-depth -1)
-	  ;; When parsing a nested expression from a command
-	  ;; substitution, paren-depth -1 means we have reached the
-	  ;; closing ) for that substitution.  At the top-level,
-	  ;; paren-depth -1 would indicate a syntax error...
-	  'CLOSE-SUBSTITUTION
-	  'RPAREN))
-     ((#\newline)
-      (set! expect-command? #t)
-      (set! token-count 0)
-      (set! have-for? #f)
-      'NEWLINE)
-     (else ; check for multi-character operators
-      (let* ((second (get-char port))
-	     (str (and (not (eof-object? second))
-		       (string char second))))
-	(cond
-	 ((equal? str "<<") ; special case: check if we have <<- or <<
-	  (let ((third (get-char port)))
-	    (if (eq? third #\-)
-		'DLESSDASH
-		(begin
-		  (unget-char port third)
-		  'DLESS))))
-	 ;; If 'str' is one of the multi-character operators, return
-	 ;; that operator
-	 ((assoc str multi-operators)
-	  (return-operator (cdr (assoc str multi-operators))))
-	 ;; otherwise, "unget" the second char and return a
-	 ;; single-char character operator
-	 (else
-	  (or (eof-object? second) (unget-char port second))
-	  (return-operator (cdr (assoc char single-operators)))))))))
+    (let* ((second (get-char port))
+	   (third (get-char port))
+	   (candidate (if (eof-object? second)
+			  (string char)
+			  (if (eof-object? third)
+			      (string char second)
+			      (string char second third))))
+	   (my-match (match-operator candidate)))
+      (return-operator (cdr my-match))))
   (define (ionumber chars)
     (let ((c (get-char port)))
       (cond
