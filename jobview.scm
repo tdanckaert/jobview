@@ -1,7 +1,4 @@
-(add-to-load-path (dirname (current-filename)))
-
-(use-modules (bash-parse)
-	     (srfi srfi-1)
+(use-modules (srfi srfi-1)
 	     (srfi srfi-9)
 	     (srfi srfi-13)
 	     (srfi srfi-26)
@@ -18,6 +15,9 @@
 	     (ncurses curses)
 	     (ncurses menu)
 	     (ncurses panel))
+
+(add-to-load-path (dirname (current-filename)))
+(use-modules (bash-parse))
 
 (define +options+ (getopt-long (command-line)
 			       '((help (single-char #\h) (value #f))
@@ -42,22 +42,6 @@
 
 (define +verbose?+ (option-ref +options+ 'verbose #f))
 
-(define-record-type <job>
-  (make-job user id array-id name procs nodes interactive? workdir args effic tstart walltime)
-  job?
-  (user job-user)
-  (id job-id)
-  (array-id job-array-id)
-  (name job-name)
-  (procs job-procs)
-  (nodes job-nodes)
-  (interactive? job-interactive?)
-  (workdir job-workdir)
-  (args job-args)
-  (effic job-effic)
-  (tstart job-tstart)
-  (walltime job-walltime))
-
 ;; The cluster on which we are running, or #f if none:
 (define +host-cluster+
   (getenv "VSC_INSTITUTE_CLUSTER"))
@@ -74,13 +58,6 @@
     (show-help)
     (display "ERROR: Please specify the cluster name.\n")
     (exit 1))
-
-(define (cat-jobscript job)
-  "An external command which outputs the jobscript for JOBID on stdout."
-  (format #f "ssh master-~a.uantwerpen.be sudo /bin/cat /var/spool/torque/server_priv/jobs/~a.~a.SC"
-	  +target-cluster+
-	  (job-id job)
-	  +target-cluster+))
 
 (define (checkjob-all)
   "An external command which prints an XML-formatted list of all jobs
@@ -110,6 +87,29 @@ if CMD's exit status is non-zero."
 	  (if +verbose?+ (format #t "Done~%"))
 	  (doupdate)
 	  result)))))
+
+(define-record-type <job>
+  (make-job user id array-id name procs nodes interactive? workdir args effic tstart walltime)
+  job?
+  (user job-user)
+  (id job-id)
+  (array-id job-array-id)
+  (name job-name)
+  (procs job-procs)
+  (nodes job-nodes)
+  (interactive? job-interactive?)
+  (workdir job-workdir)
+  (args job-args)
+  (effic job-effic)
+  (tstart job-tstart)
+  (walltime job-walltime))
+
+(define (cat-jobscript job)
+  "An external command which outputs the jobscript for JOBID on stdout."
+  (format #f "ssh master-~a.uantwerpen.be sudo /bin/cat /var/spool/torque/server_priv/jobs/~a.~a.SC"
+	  +target-cluster+
+	  (job-id job)
+	  +target-cluster+))
 
 (define-record-type <node>
   (make-node procs mem)
