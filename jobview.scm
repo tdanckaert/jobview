@@ -225,17 +225,23 @@ using the accessor FIELD, e.g. (compare job-effic)."
 			    (psutil (string->number psutil))
 			    (tstart (string->number tstart))
 			    (walltime (string->number walltime))
-			    (used-walltime (string->number used-walltime)))
+			    (used-walltime (string->number used-walltime))
+			    ;; To calculate efficiency, we could
+			    ;; use the XML entry "StatsPSDed",
+			    ;; (reserved CPU-time), but this
+			    ;; entry is missing if resources were
+			    ;; requested as follows:
+			    ;; "tasks=<x>:lprocs=all".
+			    ;; Therefore, we calculate the
+			    ;; reserved CPU-time from walltime
+			    ;; and number of procs.
+			    (effic (if (> procs 0) ; procs may be 0 if alloc-nodes is missing
+				       (* 100 (/ psutil
+						 (* procs
+						    (max used-walltime 1)))) ; If used-walltime is 0, round up to 1 second to avoid division by 0
+				       -1))) ; if we can't calculate efficiency
 		       (make-job user job-id array-id name procs nodes
-				 interactive? dir args
-				 ;; To calculate efficiency, we could use
-				 ;; the XML entry "StatsPSDed", demanded
-				 ;; processor time, but this entry is
-				 ;; missing if resources were requested as
-				 ;; follows: "tasks=<x>:lprocs=all".
-				 (* 100 (/ psutil
-					   (* procs (max used-walltime 1)))) ; If used-walltime is 0, round up to 1 second to avoid division by 0:
-				 tstart walltime))]))
+				 interactive? dir args effic tstart walltime))]))
     (lambda (key . parameters)
       (endwin)
       (format #t "Failed to match job SXML expression~%~y
