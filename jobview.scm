@@ -544,7 +544,7 @@ Press <Enter> to continue")
 
 ;; Column width, label, and formatting for the job menu:
 (define *menu-table*
-  `((7 "Id" "~a")
+  `((8 "Id" "~a")
     (8 "User" "~a")
     (20 "Name" "~20@y")
     (5 "Procs" "~5a")
