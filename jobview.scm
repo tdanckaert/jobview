@@ -280,11 +280,18 @@ results as a list."
 	     (child-jobs
 	      (if (null? child-jobids)
 		  '()
-		  (process-output
-		   read-xml
-		   ;; For efficiency, we chain all "checkjob <child-id>" commands and wrap them in one ssh command:
-		   (format #f "ssh login-~a.uantwerpen.be \"~{checkjob -v --xml ~a~^; ~}\""
-			   +target-cluster+ child-jobids)))))
+		  (begin
+		    (when (> (length child-jobids) 10)
+		      ;; Running checkjob for each child-jobid can
+		      ;; take some time.
+		      (endwin)
+		      (format #t "Retrieving ~d array jobs.~%" (length child-jobids))
+		      (doupdate))
+		    (process-output
+		     read-xml
+		     ;; For efficiency, we chain all "checkjob <child-id>" commands and wrap them in one ssh command:
+		     (format #f "ssh login-~a.uantwerpen.be \"~{checkjob -v --xml ~a~^; ~}\""
+			     +target-cluster+ child-jobids))))))
 	(map sxml->job
 	     (filter running?
 		     ((sxpath '(// Data job)) (list jobs child-jobs))))))
