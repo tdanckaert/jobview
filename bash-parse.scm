@@ -263,11 +263,13 @@
 	     (collect (cons c chars) token))))))
   (define (whitespace chars)
     (let ((c (get-char port)))
-      (if (and (char-whitespace? c) (not (eq? c #\newline)))
-	  (whitespace (cons c chars))
-	  (begin
-	    (unget-char port c)
-	    `(WHITESPACE ,(reverse-list->string chars))))))
+      (if (eof-object? c)
+	  `(WHITESPACE ,(reverse-list->string chars))
+	  (if (and (char-whitespace? c) (not (eq? c #\newline)))
+	      (whitespace (cons c chars))
+	      (begin
+		(unget-char port c)
+		`(WHITESPACE ,(reverse-list->string chars)))))))
   (define (comment)
     (let ((line (read-line port 'peek)))
       (if (string-prefix? "PBS" line)
