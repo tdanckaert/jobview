@@ -249,13 +249,15 @@ This is a bug.~%" x)
       (throw key parameters))))
 
 (define (read-xml port)
-  "Parse a series of xml documents from PORT into sxml, and return the
-results as a list."
-  (let ((result '()))
-    (while (not (eof-object? (peek-char port)))
-      (set! result (cons (xml->sxml port) result))
-      (read-line port))
-    result))
+  "Parse a series of newline-separated xml documents from PORT into
+sxml, and return the results as a list."
+  (reverse
+   (let loop ((result '()))
+     (if (eof-object? (peek-char port))
+	 result
+	 (let ((record (xml->sxml port)))
+	   (read-line port)
+	   (loop (cons record result)))))))
 
 (define (get-joblist)
   (define (running? job-or-child)
