@@ -28,11 +28,16 @@
 	 (program-name (if last-sep
 			   (substring command (1+ last-sep))
 			   command)))
-    (format #t "~a [options] [cluster]
+    (format #t "~a [options] [cluster]...
 
-  -v, --verbose   Show external commands.
+  Look for jobs on the clusters which do not reach the required
+  efficiency.
+
+  Options:
+
+  -v, --verbose   Show external commands used.
   -l, --log-file  List of job id's which were previously detected.
-  -t, --threshold Efficiency threshold.
+  -t, --threshold Efficiency threshold (default: 10%).
   --mailto        Address(-es) to send a report to.
   -h, --help      Display this help.
 
@@ -56,23 +61,22 @@
 (define +host-cluster+
   (getenv "VSC_INSTITUTE_CLUSTER"))
 
-;; The cluster from which we want to obtain information:
-(define +target-cluster+
+;; The cluster(-s) we are interested in:
+(define +target-clusters+
   (let ((args (option-ref +options+ '() '())))
     (if (> (length args) 0)
-	(car args)
-	+host-cluster+)))
+	args
+	(list +host-cluster+))))
 
-;; If no +target-cluster+ is known, there is not much we can do:
-(unless +target-cluster+
+(unless +target-clusters+
     (show-help)
-    (display "ERROR: Please specify the cluster name.\n")
+    (display "ERROR: Please specify the cluster(-s) you want to check.\n")
     (exit 1))
 
-(define (checkjob-all)
+(define (checkjob-all cluster)
   "An external command which prints an XML-formatted list of all jobs
 to stdout."
-  (format #f "ssh login-~a.uantwerpen.be checkjob -v --xml ALL" +target-cluster+))
+  (format #f "ssh login-~a.uantwerpen.be checkjob -v --xml ALL" cluster))
 
 (define (process-output proc cmd)
   "Runs CMD as an external process, with an input port from which the
@@ -112,24 +116,20 @@ if CMD's exit status is non-zero."
   (tstart job-tstart)
   (walltime job-walltime))
 
-(define (cat-jobscript job)
-  "An external command which outputs the jobscript for JOBID on stdout."
-  (format #f "ssh master-~a.uantwerpen.be sudo /bin/cat /var/spool/torque/server_priv/jobs/~a.~a.SC"
-	  +target-cluster+
-	  (job-id job)
-	  +target-cluster+))
-
 (define-record-type <node>
   (make-node procs mem)
   node?
   (procs node-procs)
   (mem node-mem))
 
+(define (get-nodes cluster)
+  (let ((checknode (format #f
+			   "ssh login-~a.uantwerpen.be checknode --xml ALL"
+			   cluster)))
+    ((sxpath '(// Data node)) (process-output xml->sxml checknode))))
+
 (define *node-properties*
-  (let* ((nodes ((sxpath '(// Data node))
-		 (process-output
-		  xml->sxml (format #f "ssh login-~a.uantwerpen.be checknode --xml ALL"
-				    +target-cluster+))))
+  (let* ((nodes (fold append '() (map get-nodes +target-clusters+)))
 	 (table (make-hash-table (length nodes))))
     (for-each
      (lambda (the-node)
@@ -247,7 +247,7 @@ sxml, and return the results as a list."
 	   (read-line port)
 	   (loop (cons record result)))))))
 
-(define (get-joblist)
+(define (get-joblist cluster)
   (define (running? job-or-child)
     ;; TODO: Can this be stated more briefly?
     (equal? (sxml-match job-or-child
@@ -257,7 +257,7 @@ sxml, and return the results as a list."
 			 state]) "Running"))
   (catch 'cmd-failed
     (lambda ()
-      (let* ((jobs (process-output xml->sxml (checkjob-all)))
+      (let* ((jobs (process-output xml->sxml (checkjob-all cluster)))
 	     ;; "checkjob ALL" does not show array children, therefore
 	     ;; we request info about all array children as well.  We
 	     ;; only want to check running child jobs, otherwise the
@@ -278,7 +278,7 @@ sxml, and return the results as a list."
 		     read-xml
 		     ;; For efficiency, we chain all "checkjob <child-id>" commands and wrap them in one ssh command:
 		     (format #f "ssh login-~a.uantwerpen.be \"~{checkjob -v --xml ~a~^; ~}\""
-			     +target-cluster+ child-jobids))))))
+			     cluster child-jobids))))))
 	(map sxml->job
 	     (filter running?
 		     ((sxpath '(// Data job)) (list jobs child-jobs))))))
@@ -287,40 +287,65 @@ sxml, and return the results as a list."
 command '~a' returned '~a', return code ~d.\n"
 		     cmd (string-trim-right message #\newline) status)))))
 
-(let* ((tnow (current-time))
-       (jobs (get-joblist))
-       (badjobs (filter (lambda (job)
-			  (and (< (job-effic job) +min-effic+) ; low-efficiency jobs
-                               (> (- tnow (job-tstart job)) 600))) ; which have been running for at least 10 minutes
-                        jobs))
-       (checkedjobs (if (and +log-file+ (access? +log-file+ R_OK))
-			(with-input-from-file +log-file+
-			  read)
-			'())))
+(define (report jobs-alist)
+  (let* ((tnow (current-time))
+	 (port (if +mailto+
+		   (let ((result (open-output-pipe +mailcommand+)))
+		     (setvbuf result 'block)
+		     result)
+		   (current-output-port))))
+    (for-each (lambda (clusterjobs)
+		(format port "~a:~%" (car clusterjobs))
+		(format port "Id     User     Name ~38t Effic  Remain~%")
+		(for-each
+		 (lambda (job)
+		   (let* ((time-remaining (- (+ (job-tstart job) (job-walltime job))
+					     tnow))
+			  (hh:mm:ss (format #f "~:[ ~;-~]~{~2,'0d~^:~}"
+					    (< time-remaining 0)
+					    (hour-min-sec (abs time-remaining)))))
+		     (format port "~a ~a~t ~20@y ~38t ~5,2f ~a~%"
+			     (job-id job) (job-user job) (job-name job) (job-effic job)
+			     hh:mm:ss)))
+		 (cdr clusterjobs))
+		(format port "~%"))
+	      jobs-alist)
+    (if +mailto+ (close-port port))))
 
-  (unless (null? badjobs)
-    (let* ((port (if +mailto+
-		     (let ((result (open-output-pipe +mailcommand+)))
-		       (setvbuf result 'block)
-		       result)
-		     (current-output-port))))
-      (format port "Id     User     Name ~32t Effic  Remain~%")
-      (for-each
-       (lambda (job)
-	 (unless (member (job-id job) checkedjobs)
-	   (let* ((time-remaining (- (+ (job-tstart job) (job-walltime job))
-				     tnow))
-		  (hh:mm:ss (format #f "~:[ ~;-~]~{~2,'0d~^:~}"
-				    (< time-remaining 0)
-				    (hour-min-sec (abs time-remaining)))))
-             (format port "~a ~a~t ~20@y ~32t ~5,2f ~a~%"
-                     (job-id job) (job-user job) (job-name job) (job-effic job)
-		     hh:mm:ss))))
-       badjobs)
-      (if +mailto+ (close-port port))))
+(let* ((tnow (current-time))
+       (isbad? (lambda (job)
+		 (and (< (job-effic job) +min-effic+) ; low-efficiency jobs
+                      (> (- tnow (job-tstart job)) 600)))) ; which have been running for at least 10 minutes
+       (badjobs (map (lambda (cluster)
+		       (cons cluster
+			     (filter isbad? (get-joblist cluster))))
+		     +target-clusters+))
+       (oldjobs (if (and +log-file+ (access? +log-file+ R_OK))
+		    (with-input-from-file +log-file+ read)
+		    '()))
+       (newjobs (let loop ((jobs-alist badjobs)
+			   (result '()))
+		      (let* ((clusterjobs (car jobs-alist))
+			     (tail (cdr jobs-alist))
+			     (cluster (car clusterjobs))
+			     (jobs (cdr clusterjobs))
+			     (old (or (assoc-ref oldjobs cluster) '()))
+			     (new (filter (lambda (job)
+					    (not (member (job-id job) old))) jobs))
+			     (result-next (if (null? new)
+					      result
+					      (acons cluster new result))))
+			(if (null? tail)
+			    result-next
+			    (loop tail result-next))))))
+  (unless (null? newjobs)
+    (report newjobs))
 
   (if +log-file+
       (with-output-to-file +log-file+
 	(lambda ()
-	  (write (map job-id badjobs))
+	  (write (map
+		  (lambda (pair)
+		    (cons (car pair) (map job-id (cdr pair))))
+		  badjobs))
           (display #\newline)))))
