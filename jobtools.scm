@@ -1,18 +1,25 @@
 (define-module (jobtools)
   #:export (get-joblist
+	    get-jobscript
+	    job-args
+	    job-node-loads
 	    job-id
+	    job-interactive?
+	    job-array-id
 	    job-effic
 	    job-user
 	    job-name
+	    job-nodes
+	    job-procs
 	    job-tstart
-	    job-walltime))
+	    job-walltime
+	    job-workdir))
 
 (use-modules (srfi srfi-1)
 	     (srfi srfi-9)
 	     (srfi srfi-13)
 	     (srfi srfi-26)
 	     (ice-9 format)
-	     (ice-9 match)
 	     (ice-9 popen)
 	     (ice-9 rdelim)
 	     (ice-9 regex)
@@ -87,6 +94,30 @@ if CMD's exit status is non-zero."
 			       (make-node (string->number rcproc)
 					  (string->number rcmem)))])) nodes)
     table))
+
+(define (job-node-loads job cluster)
+  "Get the load for each node allocated to JOB, as reported by 'mdiag
+-n' or 'checknode'."
+  (let* ((mdiag (format #f "ssh login-~a.uantwerpen.be \"~{mdiag -n --xml ~a~^; ~}\""
+			cluster (job-nodes job)))
+	 (node-xml (process-output read-xml mdiag)))
+    (sxml-match node-xml
+		[(list (*TOP* (Data (node (@ (LOAD (,loads "-1")) . ,attrs)))) ...) ; LOAD attribute is sometimes missing
+		 (map string->number loads)])))
+
+(define (cat-jobscript job cluster)
+  "An external command which outputs the jobscript for JOBID on stdout."
+  (format #f "ssh master-~a.uantwerpen.be sudo /bin/cat /var/spool/torque/server_priv/jobs/~a.~a.SC"
+	  cluster (job-id job) cluster))
+
+(define (get-jobscript job cluster)
+  (catch 'cmd-failed
+    (lambda () (process-output get-string-all (cat-jobscript job cluster)))
+    (lambda (key cmd status message)
+      (format #f
+	      "ERROR: Could not get script for job ~a.
+command '~a' returned '~a', return code ~d.\n"
+	      (job-id job) cmd (string-trim-right message #\newline) status))))
 
 (define (sxml->job x node-properties)
   "Create a job record from checkjob's xml output."

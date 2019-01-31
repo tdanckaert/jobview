@@ -1,3 +1,5 @@
+(add-to-load-path (dirname (current-filename)))
+
 (use-modules (srfi srfi-1)
 	     (srfi srfi-9)
 	     (srfi srfi-13)
@@ -5,19 +7,12 @@
 	     (ice-9 format)
 	     (ice-9 getopt-long)
 	     (ice-9 match)
-	     (ice-9 popen)
-	     (ice-9 rdelim)
-	     (ice-9 regex)
 	     (ice-9 textual-ports)
-	     (sxml simple)
-	     (sxml match)
-	     (sxml xpath)
 	     (ncurses curses)
 	     (ncurses menu)
-	     (ncurses panel))
-
-(add-to-load-path (dirname (current-filename)))
-(use-modules (bash-parse))
+	     (ncurses panel)
+	     (bash-parse)
+	     (jobtools))
 
 (define +options+ (getopt-long (command-line)
 			       '((help (single-char #\h) (value #f))
@@ -59,78 +54,26 @@
     (display "ERROR: Please specify the cluster name.\n")
     (exit 1))
 
-(define (checkjob-all)
-  "An external command which prints an XML-formatted list of all jobs
-to stdout."
-  (format #f "ssh login-~a.uantwerpen.be checkjob -v --xml ALL" +target-cluster+))
+;; Wrap some external commands from jobtools in (endwin)...(doupdate)
+;; to avoid messing up terminal state when those commands print
+;; output:
+(define (my-get-joblist)
+  (endwin)
+  (let ((result (get-joblist +target-cluster+)))
+    (doupdate)
+    result))
 
-(define (process-output proc cmd)
-  "Runs CMD as an external process, with an input port from which the
-process' stdout may be read, and runs the procedure PROC that takes
-this input prot as a single argument.  Throws an exception 'cmd-failed
-if CMD's exit status is non-zero."
-  (let* ((err-pipe (pipe))
-	 (err-write (cdr err-pipe))
-	 (err-read (car err-pipe)))
-    (endwin)
-    (if +verbose?+ (format #t "~a... " cmd))
-    (with-error-to-port err-write
-      (lambda ()
-	(let* ((port (open-input-pipe cmd))
-	       (ignore (setvbuf port 'block))
-	       (result (proc port))
-	       (status (close-pipe port)))
-	  (close-port err-write)
-	  (or (zero? status)
-	      (throw 'cmd-failed cmd status
-		     (get-string-all err-read)))
-	  (if +verbose?+ (format #t "Done~%"))
-	  (doupdate)
-	  result)))))
+(define (my-get-jobscript job)
+  (endwin)
+  (let ((result (get-jobscript job +target-cluster+)))
+    (doupdate)
+    result))
 
-(define-record-type <job>
-  (make-job user id array-id name procs nodes interactive? workdir args effic tstart walltime)
-  job?
-  (user job-user)
-  (id job-id)
-  (array-id job-array-id)
-  (name job-name)
-  (procs job-procs)
-  (nodes job-nodes)
-  (interactive? job-interactive?)
-  (workdir job-workdir)
-  (args job-args)
-  (effic job-effic)
-  (tstart job-tstart)
-  (walltime job-walltime))
-
-(define (cat-jobscript job)
-  "An external command which outputs the jobscript for JOBID on stdout."
-  (format #f "ssh master-~a.uantwerpen.be sudo /bin/cat /var/spool/torque/server_priv/jobs/~a.~a.SC"
-	  +target-cluster+
-	  (job-id job)
-	  +target-cluster+))
-
-(define-record-type <node>
-  (make-node procs mem)
-  node?
-  (procs node-procs)
-  (mem node-mem))
-
-(define *node-properties*
-  (let* ((nodes ((sxpath '(// Data node))
-		 (process-output
-		  xml->sxml (format #f "ssh login-~a.uantwerpen.be checknode --xml ALL"
-				    +target-cluster+))))
-	 (table (make-hash-table (length nodes))))
-    (for-each
-     (lambda (the-node)
-       (sxml-match the-node
-		   [(node (@ (NODEID ,id) (RCPROC ,rcproc) (RCMEM (,rcmem "0"))))
-		    (hash-set! table id
-			       (make-node (string->number rcproc)
-					  (string->number rcmem)))])) nodes)
-    table))
+(define (my-node-loads job)
+  (endwin)
+  (let ((result (job-node-loads job +target-cluster+)))
+    (doupdate)
+    result))
 
 (define (number-of-lines string ncols)
   "Returns number of lines required to display STRING, when wrapping
@@ -176,141 +119,6 @@ using the accessor FIELD, e.g. (compare job-effic)."
        (else
 	(string<? f1 f2))))))
 
-(define (sxml->job x)
-  "Create a job record from checkjob's xml output."
-  (catch #t
-    (lambda ()
-      (sxml-match x [(job (@ (User ,user)
-			     (JobID ,id)
-			     (JobName ,name)
-			     (StatPSUtl (,psutil "0"))
-			     (StartTime ,tstart)
-			     (AWDuration (,used-walltime "0")) ; "AWDuration" is missing for jobs that have just started
-			     (ReqAWDuration ,walltime)
-			     (IWD ,dir)
-			     (Flags (,flags ""))
-			     (SubmitArgs (,args #f))
-			     . ,job-attrs )
-			  (req (@ (AllocNodeList (,alloc-nodes #f))
-				  (TCReqMin ,min-tasks)
-				  (ReqProcPerTask ,proc-per-task)
-				  . ,req-attrs))
-			  . ,rest) ; e.g. Messages
-		     (let* (;; Match ID for array sub-jobs "x[y]", or
-			    ;; simply "x" for a regular job:
-			    (match-id (string-match "([0-9]+)(\\[([0-9]+)\\])?" id))
-			    (job-id (match:substring match-id 1))
-			    (array-id (if (match:substring match-id 3)
-					  (string->number (match:substring match-id 3))
-					  #f))
-			    ;; AllocNodeList is a comma-separated list
-			    ;; of nodes, each node optionally followed
-			    ;; by the number of procs ":nprocs"
-			    (nodes (and alloc-nodes
-					;; alloc-nodes can be missing if Torque and Moab get out of sync.
-					(map (lambda (s)
-					       (let ((index (string-index s #\:)))
-						 (if index
-						     (substring s 0 index)
-						     s)))
-					     (string-split alloc-nodes #\,))))
-			    (interactive? (member "INTERACTIVE"
-						  (string-split flags #\,)))
-			    (tasks (string->number (string-trim-right min-tasks #\*)))
-			    (procs (* tasks (if (equal? proc-per-task "-1") ; "-1" means "all"
-						(if nodes
-						    (node-procs (hash-ref *node-properties* (car nodes)))
-						    0)
-						(string->number proc-per-task))))
-			    (psutil (string->number psutil))
-			    (tstart (string->number tstart))
-			    (walltime (string->number walltime))
-			    (used-walltime (string->number used-walltime))
-			    ;; To calculate efficiency, we could
-			    ;; use the XML entry "StatsPSDed",
-			    ;; (reserved CPU-time), but this
-			    ;; entry is missing if resources were
-			    ;; requested as follows:
-			    ;; "tasks=<x>:lprocs=all".
-			    ;; Therefore, we calculate the
-			    ;; reserved CPU-time from walltime
-			    ;; and number of procs.
-			    (effic (if (> procs 0) ; procs may be 0 if alloc-nodes is missing
-				       (* 100 (/ psutil
-						 (* procs
-						    (max used-walltime 1)))) ; If used-walltime is 0, round up to 1 second to avoid division by 0
-				       -1))) ; if we can't calculate efficiency
-		       (make-job user job-id array-id name procs nodes
-				 interactive? dir args effic tstart walltime))]))
-    (lambda (key . parameters)
-      (endwin)
-      (format #t "Failed to match job SXML expression~%~y
-This is a bug.~%" x)
-      (throw key parameters))))
-
-(define (read-xml port)
-  "Parse a series of newline-separated xml documents from PORT into
-sxml, and return the results as a list."
-  (reverse
-   (let loop ((result '()))
-     (if (eof-object? (peek-char port))
-	 result
-	 (let ((record (xml->sxml port)))
-	   (read-line port)
-	   (loop (cons record result)))))))
-
-(define (get-joblist)
-  (define (running? job-or-child)
-    ;; TODO: Can this be stated more briefly?
-    (equal? (sxml-match job-or-child
-			[(job (@ (State ,state) . ,attrs) . ,jobdata)
-			 state]
-			[(child (@ (State ,state) . ,attrs) . ,childdata)
-			 state]) "Running"))
-  (define filter (@ (guile) filter)) ; Name clash with "filter" from (sxml xpath).
-  (catch 'cmd-failed
-    (lambda ()
-      (let* ((jobs (process-output xml->sxml (checkjob-all)))
-	     ;; "checkjob ALL" does not show array children, therefore
-	     ;; we request info about all array children as well.  We
-	     ;; only want to check running child jobs, otherwise the
-	     ;; number of entries could be huge:
-	     (array-children (filter running?
-				     ((sxpath '(// Data job ArrayInfo child)) jobs)))
-	     (child-jobids (sxml-match array-children
-				       [(list (child (@ (Name ,jobid) . ,rest)) ...) jobid]))
-	     (child-jobs
-	      (if (null? child-jobids)
-		  '()
-		  (begin
-		    (when (> (length child-jobids) 10)
-		      ;; Running checkjob for each child-jobid can
-		      ;; take some time.
-		      (endwin)
-		      (format #t "Retrieving ~d array jobs.~%" (length child-jobids))
-		      (doupdate))
-		    (process-output
-		     read-xml
-		     ;; For efficiency, we chain all "checkjob <child-id>" commands and wrap them in one ssh command:
-		     (format #f "ssh login-~a.uantwerpen.be \"~{checkjob -v --xml ~a~^; ~}\""
-			     +target-cluster+ child-jobids))))))
-	(map sxml->job
-	     (filter running?
-		     ((sxpath '(// Data job)) (list jobs child-jobs))))))
-    (lambda (key cmd status message)
-      (error (format #f "ERROR: Could not obtain job list: \
-command '~a' returned '~a', return code ~d.\n"
-		     cmd (string-trim-right message #\newline) status)))))
-
-(define (get-jobscript job)
-  (catch 'cmd-failed
-    (lambda () (process-output get-string-all (cat-jobscript job)))
-    (lambda (key cmd status message)
-      (format #f
-	      "ERROR: Could not get script for job ~a.
-command '~a' returned '~a', return code ~d.\n"
-	      (job-id job) cmd (string-trim-right message #\newline) status))))
-
 (define (draw-box win y x ny nx)
   "Draw a box of dimensions NY * NX, with upper left coordinates Y and X."
   (move win y x)
@@ -325,16 +133,6 @@ command '~a' returned '~a', return code ~d.\n"
   (hline win (acs-hline) (- nx 2))
   (move win (+ y (1- ny)) (+ x (1- nx)))
   (addch win (acs-lrcorner)))
-
-(define (job-node-loads job)
-  "Get the load for each node allocated to JOB, as reported by 'mdiag
--n' or 'checknode'."
-  (let* ((mdiag (format #f "ssh login-~a.uantwerpen.be \"~{mdiag -n --xml ~a~^; ~}\""
-			+target-cluster+ (job-nodes job)))
-	 (node-xml (process-output read-xml mdiag)))
-    (sxml-match node-xml
-		[(list (*TOP* (Data (node (@ (LOAD (,loads "-1")) . ,attrs)))) ...) ; LOAD attribute is sometimes missing
-		 (map string->number loads)])))
 
 (define (pretty-print win port)
   "Read a job script from PORT and print it to WIN with syntax
@@ -449,10 +247,10 @@ resized."
   (lambda (job)
     (let ((script (if (job-interactive? job)
 		      "<Interactive job>"
-		      (get-jobscript job)))
+		      (my-get-jobscript job)))
 	  ;; Zip load with node name, and sort the pairs by increasing load:
 	  (loads (and (job-nodes job)
-		      (sort (zip (job-nodes job) (job-node-loads job))
+		      (sort (zip (job-nodes job) (my-node-loads job))
 			    (lambda (x y) (< (cadr x) (cadr y)))))))
       (show-panel panel)
       (let show-script ()
@@ -695,7 +493,7 @@ for this predicate, sort in the opposite direction."
 		    `(b "S") " SSH to job master host "
 		    `(b "F5") " Refresh")
 
-  (let display-jobs ((jobs (get-joblist))
+  (let display-jobs ((jobs (my-get-joblist))
 		     (sort-p (compare job-effic)))
     (let* ((jobs (sort-up-down jobs sort-p))
 	   (jobs-menu
@@ -769,7 +567,7 @@ for this predicate, sort in the opposite direction."
 
 	 ;; Refresh job list.
 	 ((eqv? c (key-f 5))
-	  (update-jobs (get-joblist) sort-p))
+	  (update-jobs (my-get-joblist) sort-p))
 
 	 ;; Open SSH session on the master node.
 	 ((eqv? c #\s)
