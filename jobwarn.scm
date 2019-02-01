@@ -57,7 +57,7 @@
   (let ((args (option-ref +options+ '() '())))
     (if (> (length args) 0)
 	args
-	(list +host-cluster+))))
+	(if +host-cluster+ (list +host-cluster+) '() ))))
 
 (if (null? +target-clusters+)
     (begin
