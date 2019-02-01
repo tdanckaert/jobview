@@ -38,16 +38,25 @@ to stdout."
 (define (process-output proc cmd)
   "Runs CMD as an external process, with an input port from which the
 process' stdout may be read, and runs the procedure PROC that takes
-this input prot as a single argument.  Throws an exception 'cmd-failed
+this input port as a single argument.  Throws an exception 'cmd-failed
 if CMD's exit status is non-zero."
   (let* ((err-pipe (pipe))
 	 (err-write (cdr err-pipe))
-	 (err-read (car err-pipe)))
+	 (err-read (car err-pipe))
+	 (stderr (current-error-port)))
     (with-error-to-port err-write
       (lambda ()
 	(let* ((port (open-input-pipe cmd))
 	       (ignore (setvbuf port 'block))
-	       (result (proc port))
+	       (result
+		(catch #t
+		  ;; Catch any exception thrown by applying PROC to
+		  ;; the output of CMD: if CMD fails, we check the
+		  ;; exit status below; if CMD succeeds, PROC must be
+		  ;; able to deal with its output.
+		  (lambda () (proc port))
+		  (lambda (key . args)
+		    (format stderr "Caught exception ~a from ~y~%" key proc))))
 	       (status (close-pipe port)))
 	  (close-port err-write)
 	  (or (zero? status)
@@ -117,7 +126,7 @@ if CMD's exit status is non-zero."
       (format #f
 	      "ERROR: Could not get script for job ~a.
 command '~a' returned '~a', return code ~d.\n"
-	      (job-id job) cmd (string-trim-right message #\newline) status))))
+	      (job-id job) cmd (string-trim-right message char-set:whitespace) status))))
 
 (define (sxml->job x node-properties)
   "Create a job record from checkjob's xml output."
@@ -239,5 +248,5 @@ sxml, and return the results as a list."
 		     ((sxpath '(// Data job)) (list jobs child-jobs))))))
     (lambda (key cmd status message)
       (error (format #f "ERROR: Could not obtain job list: \
-command '~a' returned '~a', return code ~d.\n"
-		     cmd (string-trim-right message #\newline) status)))))
+command~%  '~a'~%returned~%  '~a',~%return code ~d.\n"
+		     cmd (string-trim-right message char-set:whitespace) status)))))
