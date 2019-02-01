@@ -18,6 +18,7 @@
 (use-modules (srfi srfi-1)
 	     (srfi srfi-9)
 	     (srfi srfi-13)
+	     (srfi srfi-26)
 	     (ice-9 format)
 	     (ice-9 popen)
 	     (ice-9 rdelim)
@@ -240,7 +241,7 @@ sxml, and return the results as a list."
 		     ;; For efficiency, we chain all "checkjob <child-id>" commands and wrap them in one ssh command:
 		     (format #f "ssh login-~a.uantwerpen.be \"~{checkjob -v --xml ~a~^; ~}\""
 			     cluster child-jobids))))))
-	(map (lambda (sxml) (sxml->job sxml nodes))
+	(map (cut sxml->job <> nodes)
 	     (filter running?
 		     ((sxpath '(// Data job)) (list jobs child-jobs))))))
     (lambda (key cmd status message)

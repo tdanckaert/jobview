@@ -286,9 +286,7 @@ resized."
 	  (addstr-formatted panel
 			    `(b "Q Enter Space") " Go back")
 
-	  (call-with-input-string script
-			   (lambda (port)
-			     (pretty-print pad port)))
+	  (call-with-input-string script (cut pretty-print pad <>))
 
 	  (update-panels)
 	  (doupdate)
@@ -495,7 +493,7 @@ for this predicate, sort in the opposite direction."
 		     (sort-p (compare job-effic)))
     (let* ((jobs (sort-up-down jobs sort-p))
 	   (jobs-menu
-	    (new-menu (map (cut job->menu-item <> (current-time)) jobs)))
+	    (new-menu (map (cute job->menu-item <> (current-time)) jobs)))
 	   (selected-job
 	    (lambda () (list-ref jobs (item-index (current-item jobs-menu)))))
 	   (update-jobs (lambda (joblist sort-p)
