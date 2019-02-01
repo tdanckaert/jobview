@@ -26,9 +26,7 @@
 	     (ice-9 textual-ports)
 	     (sxml simple)
 	     (sxml match)
-	     (sxml xpath))
-
-(define filter (@ (guile) filter)) ; Name clash with "filter" from (sxml xpath).
+	     ((sxml xpath) #:select (sxpath)))
 
 (define (checkjob-all cluster)
   "An external command which prints an XML-formatted list of all jobs
