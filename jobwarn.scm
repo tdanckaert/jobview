@@ -1,9 +1,6 @@
 (add-to-load-path (dirname (current-filename)))
 
 (use-modules (srfi srfi-1)
-	     (srfi srfi-9)
-	     (srfi srfi-13)
-	     (srfi srfi-26)
 	     (ice-9 format)
 	     (ice-9 getopt-long)
 	     (ice-9 popen)
