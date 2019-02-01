@@ -82,7 +82,7 @@ list (hours minutes seconds)."
 		   (current-output-port))))
     (for-each (lambda (clusterjobs)
 		(format port "~a:~%" (car clusterjobs))
-		(format port "Id     User     Name ~38t Effic  Remain~%")
+		(format port "Id     User     Name ~38t Procs  Effic  Remain~%")
 		(for-each
 		 (lambda (job)
 		   (let* ((time-remaining (- (+ (job-tstart job) (job-walltime job))
@@ -90,8 +90,9 @@ list (hours minutes seconds)."
 			  (hh:mm:ss (format #f "~:[ ~;-~]~{~2,'0d~^:~}"
 					    (< time-remaining 0)
 					    (hour-min-sec (abs time-remaining)))))
-		     (format port "~a ~a~t ~20@y ~38t ~5,2f ~a~%"
-			     (job-id job) (job-user job) (job-name job) (job-effic job)
+		     (format port "~a ~a~t ~20@y ~38t ~5a  ~5,2f ~a~%"
+			     (job-id job) (job-user job) (job-name job)
+			     (job-procs job) (job-effic job)
 			     hh:mm:ss)))
 		 (cdr clusterjobs))
 		(format port "~%"))
