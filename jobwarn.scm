@@ -9,7 +9,7 @@
 (define +options+ (getopt-long (command-line)
 			       '((help (single-char #\h) (value #f))
 				 (log-file (single-char #\l) (value #t))
-				 (mailto (value #t))
+				 (mailto (single-char #\m) (value #t))
 				 (threshold (single-char #\t) (value #t)))))
 
 (define (show-help)
@@ -27,7 +27,7 @@
 
   -l, --log-file  List of job id's which were previously detected.
   -t, --threshold Efficiency threshold (default: 10%).
-  --mailto        Address(-es) to send a report to.
+  -m, --mailto    Address(-es) to send a report to.
   -h, --help      Display this help.
 
 " program-name)))
