@@ -78,20 +78,28 @@ list (hours minutes seconds)."
 		     result)
 		   (current-output-port))))
     (for-each (lambda (clusterjobs)
-		(format port "~a:~%" (car clusterjobs))
-		(format port "Id     User     Name ~38t Procs  Effic  Remain~%")
-		(for-each
-		 (lambda (job)
-		   (let* ((time-remaining (- (+ (job-tstart job) (job-walltime job))
-					     tnow))
-			  (hh:mm:ss (format #f "~:[ ~;-~]~{~2,'0d~^:~}"
-					    (< time-remaining 0)
-					    (hour-min-sec (abs time-remaining)))))
-		     (format port "~a ~a~t ~20@y ~38t ~5a  ~5,2f ~a~%"
-			     (job-id job) (job-user job) (job-name job)
-			     (job-procs job) (job-effic job)
-			     hh:mm:ss)))
-		 (cdr clusterjobs))
+		(let ((cluster (car clusterjobs))
+		      (jobs (cdr clusterjobs)))
+		  (format port "~a:~%" cluster)
+		  (format port "Id     User     Name ~38t Procs  Effic  Remain   ld Min   Mdn   Max~%")
+		  (for-each
+		   (lambda (job)
+		     (let* ((loads (if (job-nodes job) (sort (job-node-loads job cluster) <)
+				       (list 0.0)))
+			    (min-load (first loads))
+			    (max-load (last loads))
+			    (median-load (list-ref loads (quotient (length loads) 2)))
+			    (time-remaining (- (+ (job-tstart job) (job-walltime job))
+					       tnow))
+			    (hh:mm:ss (format #f "~:[ ~;-~]~{~2,'0d~^:~}"
+					      (< time-remaining 0)
+					      (hour-min-sec (abs time-remaining)))))
+		       (format port "~a ~a~t ~20@y ~38t ~5a  ~5,2f ~a  ~5,2f ~5,2f ~5,2f~%"
+			       (job-id job) (job-user job) (job-name job)
+			       (job-procs job) (job-effic job)
+			       hh:mm:ss
+			       min-load median-load max-load)))
+		   jobs))
 		(format port "~%"))
 	      jobs-alist)
     (if +mailto+ (close-port port))))
