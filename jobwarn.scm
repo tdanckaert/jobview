@@ -84,7 +84,8 @@ list (hours minutes seconds)."
 		  (format port "Id     User     Name ~38t Procs  Effic  Remain   ld Min   Mdn   Max~%")
 		  (for-each
 		   (lambda (job)
-		     (let* ((loads (if (job-nodes job) (sort (job-node-loads job cluster) <)
+		     (let* ((loads (if (job-nodes job)
+				       (sort (map node-load (job-nodes job)) <)
 				       (list 0.0)))
 			    (min-load (first loads))
 			    (max-load (last loads))

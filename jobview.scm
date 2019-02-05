@@ -67,12 +67,6 @@
     (doupdate)
     result))
 
-(define (my-node-loads job)
-  (endwin)
-  (let ((result (job-node-loads job +target-cluster+)))
-    (doupdate)
-    result))
-
 (define (number-of-lines string ncols)
   "Returns number of lines required to display STRING, when wrapping
 long lines at column NCOLS, as well as at newline characters."
@@ -248,7 +242,8 @@ resized."
 		      (my-get-jobscript job)))
 	  ;; Zip load with node name, and sort the pairs by increasing load:
 	  (loads (and (job-nodes job)
-		      (sort (zip (job-nodes job) (my-node-loads job))
+		      (sort (zip (map node-name (job-nodes job))
+				 (map node-load (job-nodes job)))
 			    (lambda (x y) (< (cadr x) (cadr y)))))))
       (show-panel panel)
       (let show-script ()
