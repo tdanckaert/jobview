@@ -333,7 +333,7 @@ resized."
   (endwin)
   (if (job-nodes job)
       (system (format #f "ssh -tt login-hopper.uantwerpen.be ssh ~a"
-		      (car (job-nodes job))))
+		      (node-name (car (job-nodes job)))))
       (begin
 	(format #t "*Active job has no allocated nodes*
 Press <Enter> to continue")
