@@ -166,12 +166,9 @@ command '~a' returned '~a', return code ~d.\n"
 			    (interactive? (member "INTERACTIVE"
 						  (string-split flags #\,)))
 			    (tasks (string->number (string-trim-right min-tasks #\*)))
-			    (procs (* tasks (if (equal? proc-per-task "-1") ; "-1" means "all"
-						(if nodes
-						    (fold (lambda (sum node)
-							    (+ sum (node-procs node))) 0 nodes)
-						    0)
-						(string->number proc-per-task))))
+			    (procs (if (equal? proc-per-task "-1") ; "-1" means "all"
+				       (if nodes (fold + 0 (map node-procs nodes)) 0)
+				       (* tasks (string->number proc-per-task))))
 			    (psutil (string->number psutil))
 			    (tstart (string->number tstart))
 			    (walltime (string->number walltime))
