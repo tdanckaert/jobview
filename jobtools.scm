@@ -4,6 +4,7 @@
 	    job-args
 	    node-load
 	    node-name
+	    node-procs
 	    job-id
 	    job-interactive?
 	    job-array-id
