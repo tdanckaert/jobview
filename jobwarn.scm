@@ -1,6 +1,7 @@
 (add-to-load-path (dirname (current-filename)))
 
 (use-modules (srfi srfi-1)
+	     (srfi srfi-26)
 	     (ice-9 format)
 	     (ice-9 getopt-long)
 	     (ice-9 popen)
@@ -70,19 +71,20 @@ list (hours minutes seconds)."
 	 (hours*3600 (- duration mins*60 secs)))
     (list (/ hours*3600 3600) (/ mins*60 60) secs)))
 
+(define +tnow+ (current-time))
+
 (define (isbad? job)
   "Returns #t if we think a job is not running correctly."
   ;; Check efficiency *and* load to avoid false positives for MPI/SSH
   ;; jobs, where Torque doesn't register CPU time:
-  (and (> (- (current-time) (job-tstart job)) 600) ; jobs running for at least 10 minutes
+  (and (> (- +tnow+ (job-tstart job)) 600) ; jobs running for at least 10 minutes
        (< (job-effic job) +min-effic+)	 ; with low efficiency
        (any (lambda (node)	; where at least one node has low load
 	      (< (node-load node) (* 0.9 (node-procs node))))
 	    (job-nodes job))))
 
 (define (report jobs-alist)
-  (let* ((tnow (current-time))
-	 (port (if +mailto+
+  (let* ((port (if +mailto+
 		   (let ((result (open-output-pipe +mailcommand+)))
 		     (setvbuf result 'block)
 		     result)
@@ -101,7 +103,7 @@ list (hours minutes seconds)."
 			    (max-load (last loads))
 			    (median-load (list-ref loads (quotient (length loads) 2)))
 			    (time-remaining (- (+ (job-tstart job) (job-walltime job))
-					       tnow))
+					       +tnow+))
 			    (hh:mm:ss (format #f "~:[ ~;-~]~{~2,'0d~^:~}"
 					      (< time-remaining 0)
 					      (hour-min-sec (abs time-remaining)))))
@@ -115,25 +117,23 @@ list (hours minutes seconds)."
 	      jobs-alist)
     (if +mailto+ (close-port port))))
 
-(let* ((tnow (current-time))
-       (badjobs (map (lambda (cluster)
-		       (cons cluster
-			     (filter isbad? (get-joblist cluster))))
+(let* ((badjobs (map (compose (cut filter isbad? <>) get-joblist)
 		     +target-clusters+))
        (oldjobs (if (and +log-file+ (access? +log-file+ R_OK))
 		    (with-input-from-file +log-file+ read)
 		    '()))
-       (newjobs (let loop ((jobs-alist badjobs)
+       (newjobs (let loop ((jobsets badjobs)
+			   (clusters +target-clusters+)
 			   (result '()))
-		  (if (null? jobs-alist)
+		  (if (null? jobsets)
 		      result
-		      (let* ((clusterjobs (car jobs-alist))
-			     (cluster (car clusterjobs))
-			     (jobs (cdr clusterjobs))
+		      (let* ((cluster (car clusters))
+			     (jobs (car jobsets))
 			     (old (or (assoc-ref oldjobs cluster) '()))
 			     (new (filter (lambda (job)
 					    (not (member (job-id job) old))) jobs)))
-			(loop (cdr jobs-alist)
+			(loop (cdr jobsets)
+			      (cdr clusters)
 			      (if (null? new)
 				  result
 				  (acons cluster new result))))))))
@@ -144,8 +144,7 @@ list (hours minutes seconds)."
   (if +log-file+
       (with-output-to-file +log-file+
 	(lambda ()
-	  (write (map
-		  (lambda (pair)
-		    (cons (car pair) (map job-id (cdr pair))))
-		  badjobs))
+	  (write (map (lambda (cluster jobs)
+			(cons cluster (map job-id jobs)))
+		      +target-clusters+ badjobs))
           (display #\newline)))))
