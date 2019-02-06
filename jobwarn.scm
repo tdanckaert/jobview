@@ -75,13 +75,18 @@ list (hours minutes seconds)."
 
 (define (isbad? job)
   "Returns #t if we think a job is not running correctly."
-  ;; Check efficiency *and* load to avoid false positives for MPI/SSH
-  ;; jobs, where Torque doesn't register CPU time:
-  (and (> (- +tnow+ (job-tstart job)) 600) ; jobs running for at least 10 minutes
-       (< (job-effic job) +min-effic+)	 ; with low efficiency
-       (any (lambda (node)	; where at least one node has low load
-	      (< (node-load node) (* 0.9 (node-procs node))))
-	    (job-nodes job))))
+  (or
+   (any ; Too high load?
+    (lambda (node) (> (node-load node) (* 1.2 (node-procs node))))
+    (job-nodes job))
+   (and ; inefficient?
+    ;; Check efficiency *and* load to avoid false positives for MPI/SSH
+    ;; jobs, where Torque doesn't register CPU time:
+    (> (- +tnow+ (job-tstart job)) 600) ; jobs running for at least 10 minutes
+    (< (job-effic job) +min-effic+)	; with low efficiency
+    (any (lambda (node)		; where at least one node has low load
+	   (< (node-load node) (* 0.9 (node-procs node))))
+	 (job-nodes job)))))
 
 (define (report jobs-alist)
   (let* ((port (if +mailto+
